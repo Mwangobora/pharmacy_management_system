@@ -6,6 +6,7 @@ from django.utils import timezone
 from decimal import Decimal
 
 
+
 class Category(models.Model):
     """Medicine classification - Flat structure"""
     
