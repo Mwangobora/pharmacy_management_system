@@ -27,7 +27,7 @@ class CategoryViewSet(viewsets.ModelViewSet):
     
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'code', 'description']
     ordering_fields = ['name', 'display_order', 'created_at']
@@ -75,7 +75,7 @@ class MedicineViewSet(viewsets.ModelViewSet):
     """
     
     queryset = Medicine.objects.select_related('category', 'supplier').all()
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['category', 'supplier', 'requires_prescription', 'is_active']
     search_fields = ['name', 'generic_name', 'batch_number', 'barcode']
@@ -262,7 +262,7 @@ class StockTransactionViewSet(viewsets.ReadOnlyModelViewSet):
         'medicine', 'created_by'
     ).all()
     serializer_class = StockTransactionSerializer
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['medicine', 'transaction_type', 'created_by']
     ordering_fields = ['transaction_date']
