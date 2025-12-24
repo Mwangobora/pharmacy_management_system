@@ -16,8 +16,20 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from inventory.views import CategoryViewSet, MedicineViewSet, StockTransactionViewSet
+from suppliers.views import SupplierViewSet, PurchaseViewSet, PurchaseItemViewSet
+
+# Create a single root router
+router = DefaultRouter()
+router.register(r'categories', CategoryViewSet, basename='category')
+router.register(r'medicines', MedicineViewSet, basename='medicine')
+router.register(r'stock-transactions', StockTransactionViewSet, basename='stock-transaction')
+router.register(r'suppliers', SupplierViewSet, basename='supplier')
+router.register(r'purchases', PurchaseViewSet, basename='purchase')
+router.register(r'purchase-items', PurchaseItemViewSet, basename='purchase-item')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('', include('inventory.urls')),
+    path('', include(router.urls)),
 ]
