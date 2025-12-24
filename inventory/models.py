@@ -1,10 +1,11 @@
 from django.db import models
-from django.db.models import F
+from django.db.models import F, Max
 from django.core.validators import MinValueValidator
 from django.core.exceptions import ValidationError
 import uuid
 from django.utils import timezone
 from decimal import Decimal
+
 
 
 class BaseModel(models.Model):
@@ -35,6 +36,27 @@ class Category(BaseModel):
 
     def __str__(self):
         return self.name
+    
+    def save(self, *args, **kwargs):
+        if not self.code:
+            # Get the highest existing code number
+            last_code = Category.objects.aggregate(
+                max_code=Max('code')
+            )['max_code']
+            
+            if last_code:
+                # Extract number: CAT001 -> 1
+                try:
+                    last_num = int(last_code.replace('CAT', ''))
+                    new_num = last_num + 1
+                except ValueError:
+                    new_num = 1
+            else:
+                new_num = 1
+            
+            self.code = f"CAT{new_num:03d}"
+        
+        super().save(*args, **kwargs)
 
 
 class Medicine(BaseModel):
