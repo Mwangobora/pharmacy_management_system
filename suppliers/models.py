@@ -2,8 +2,9 @@ from django.db import models
 from django.core.validators import MinValueValidator
 from decimal import Decimal
 
+from inventory.models import BaseModel
 
-class Supplier(models.Model):
+class Supplier(BaseModel):
     """Vendor/supplier information management"""
     
     name = models.CharField(max_length=100)
@@ -32,7 +33,7 @@ class Supplier(models.Model):
         return self.name
 
 
-class Purchase(models.Model):
+class Purchase(BaseModel):
     """Purchase orders from suppliers"""
     
     PAYMENT_STATUS_CHOICES = [
@@ -40,7 +41,7 @@ class Purchase(models.Model):
         ('partial', 'Partial'),
         ('paid', 'Paid'),
     ]
-
+    
     supplier = models.ForeignKey(
         Supplier,
         on_delete=models.PROTECT,
@@ -104,7 +105,7 @@ class Purchase(models.Model):
         return f"Purchase {self.invoice_number} - {self.supplier.name}"
 
 
-class PurchaseItem(models.Model):
+class PurchaseItem(BaseModel):
     """Line items for each purchase order"""
     
     purchase = models.ForeignKey(

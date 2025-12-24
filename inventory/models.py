@@ -2,14 +2,19 @@ from django.db import models
 from django.db.models import F
 from django.core.validators import MinValueValidator
 from django.core.exceptions import ValidationError
+import uuid
 from django.utils import timezone
 from decimal import Decimal
 
 
-
-class Category(models.Model):
-    """Medicine classification - Flat structure"""
+class BaseModel(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
+    class Meta:
+        abstract = True
+
+class Category(BaseModel):
+    """Medicine classification - Flat structure"""
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True, null=True)
     code = models.CharField(max_length=20, unique=True, blank=True, null=True)
@@ -32,7 +37,7 @@ class Category(models.Model):
         return self.name
 
 
-class Medicine(models.Model):
+class Medicine(BaseModel):
     """Core product/medicine catalog"""
     
     UNIT_CHOICES = [
@@ -121,7 +126,7 @@ class Medicine(models.Model):
         return f"{self.name} ({self.batch_number})"
 
 
-class StockTransaction(models.Model):
+class StockTransaction(BaseModel):
     """Audit trail for all inventory movements"""
     
     TRANSACTION_TYPE_CHOICES = [
@@ -132,7 +137,6 @@ class StockTransaction(models.Model):
         ('damage', 'Damage'),
         ('expired', 'Expired'),
     ]
-
     medicine = models.ForeignKey(
         Medicine,
         on_delete=models.PROTECT,

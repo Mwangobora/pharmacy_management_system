@@ -1,9 +1,9 @@
+import uuid
 from django.db import models
 from django.core.validators import MinValueValidator
 from decimal import Decimal
-
-
-class Customer(models.Model):
+from inventory.models import BaseModel
+class Customer(BaseModel):
     """Customer/patient information"""
     
     GENDER_CHOICES = [
@@ -11,7 +11,6 @@ class Customer(models.Model):
         ('F', 'Female'),
         ('Other', 'Other'),
     ]
-
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
     phone = models.CharField(max_length=20)
@@ -43,7 +42,7 @@ class Customer(models.Model):
         return f"{self.first_name} {self.last_name}"
 
 
-class Sale(models.Model):
+class Sale(BaseModel):
     """Customer sales transactions"""
     
     PAYMENT_METHOD_CHOICES = [
@@ -130,7 +129,7 @@ class Sale(models.Model):
         return f"Sale {self.invoice_number} - {customer_name}"
 
 
-class SaleItem(models.Model):
+class SaleItem(BaseModel):
     """Line items for each sale transaction"""
     
     sale = models.ForeignKey(
@@ -195,7 +194,7 @@ class SaleItem(models.Model):
         super().save(*args, **kwargs)
 
 
-class Payment(models.Model):
+class Payment(BaseModel):
     """Payment tracking for sales - supports partial payments"""
     
     PAYMENT_METHOD_CHOICES = [

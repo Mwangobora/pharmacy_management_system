@@ -1,3 +1,4 @@
+import uuid
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.validators import RegexValidator
@@ -36,6 +37,7 @@ class UserManager(BaseUserManager):
 class User(AbstractBaseUser, PermissionsMixin):
     """Custom user model for pharmacy staff"""
     
+
     ROLE_CHOICES = [
         ('admin', 'Admin'),
         ('pharmacist', 'Pharmacist'),
@@ -43,6 +45,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         ('manager', 'Manager'),
     ]
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     username = models.CharField(max_length=50, unique=True)
     email = models.EmailField(max_length=100, unique=True)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='cashier')
