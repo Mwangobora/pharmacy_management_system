@@ -1,3 +1,301 @@
-from django.shortcuts import render
+from rest_framework import viewsets, status, filters
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from django_filters.rest_framework import DjangoFilterBackend
+from django.db.models import Q, F, Sum, Count
+from django.utils import timezone
+from datetime import timedelta
 
-# Create your views here.
+from .models import Category, Medicine, StockTransaction
+from .serializers import (
+    CategorySerializer, MedicineListSerializer, MedicineDetailSerializer,
+    StockTransactionSerializer, StockAdjustmentSerializer
+)
+
+
+class CategoryViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for Category management
+    
+    list: Get all categories
+    retrieve: Get single category
+    create: Create new category
+    update: Update category
+    destroy: Delete category (soft delete via is_active)
+    """
+    
+    queryset = Category.objects.all()
+    serializer_class = CategorySerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['name', 'code', 'description']
+    ordering_fields = ['name', 'display_order', 'created_at']
+    ordering = ['display_order', 'name']
+    
+    def get_queryset(self):
+        """Filter active categories by default"""
+        queryset = super().get_queryset()
+        
+        # Filter by active status
+        is_active = self.request.query_params.get('is_active', 'true')
+        if is_active.lower() == 'true':
+            queryset = queryset.filter(is_active=True)
+        
+        return queryset
+    
+    def perform_destroy(self, instance):
+        """Soft delete: mark as inactive instead of deleting"""
+        instance.is_active = False
+        instance.save()
+    
+    @action(detail=True, methods=['get'])
+    def medicines(self, request, pk=None):
+        """Get all medicines in this category"""
+        category = self.get_object()
+        medicines = category.medicines.filter(is_active=True)
+        serializer = MedicineListSerializer(medicines, many=True)
+        return Response(serializer.data)
+
+
+class MedicineViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for Medicine management with advanced filtering
+    
+    Endpoints:
+    - GET /medicines/ - List all medicines
+    - POST /medicines/ - Create medicine
+    - GET /medicines/{id}/ - Get medicine details
+    - PUT/PATCH /medicines/{id}/ - Update medicine
+    - DELETE /medicines/{id}/ - Soft delete medicine
+    - GET /medicines/low_stock/ - Get low stock medicines
+    - GET /medicines/expiring_soon/ - Get expiring medicines
+    - GET /medicines/expired/ - Get expired medicines
+    - POST /medicines/{id}/adjust_stock/ - Manual stock adjustment
+    """
+    
+    queryset = Medicine.objects.select_related('category', 'supplier').all()
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['category', 'supplier', 'requires_prescription', 'is_active']
+    search_fields = ['name', 'generic_name', 'batch_number', 'barcode']
+    ordering_fields = ['name', 'stock_quantity', 'expiry_date', 'created_at']
+    ordering = ['name']
+    
+    def get_serializer_class(self):
+        """Use different serializers for list vs detail"""
+        if self.action == 'list':
+            return MedicineListSerializer
+        return MedicineDetailSerializer
+    
+    def get_queryset(self):
+        """
+        Custom filtering based on query parameters
+        
+        Query params:
+        - is_active: true/false
+        - stock_status: low/ok/overstock
+        - expiry_status: expired/expiring_soon/ok
+        - category: category_id
+        - supplier: supplier_id
+        """
+        queryset = super().get_queryset()
+        
+        # Filter active medicines
+        is_active = self.request.query_params.get('is_active', 'true')
+        if is_active.lower() == 'true':
+            queryset = queryset.filter(is_active=True)
+        
+        # Filter by stock status
+        stock_status = self.request.query_params.get('stock_status')
+        if stock_status == 'low':
+            queryset = queryset.filter(stock_quantity__lte=F('min_stock_level'))
+        elif stock_status == 'overstock':
+            queryset = queryset.filter(stock_quantity__gte=F('max_stock_level'))
+        
+        # Filter by expiry status
+        expiry_status = self.request.query_params.get('expiry_status')
+        today = timezone.now().date()
+        
+        if expiry_status == 'expired':
+            queryset = queryset.filter(expiry_date__lt=today)
+        elif expiry_status == 'expiring_soon':
+            thirty_days = today + timedelta(days=30)
+            queryset = queryset.filter(expiry_date__gte=today, expiry_date__lte=thirty_days)
+        
+        return queryset
+    
+    def perform_destroy(self, instance):
+        """Soft delete: mark as inactive"""
+        instance.is_active = False
+        instance.save()
+    
+    @action(detail=False, methods=['get'])
+    def low_stock(self, request):
+        """Get medicines with low stock levels"""
+        medicines = self.get_queryset().filter(
+            stock_quantity__lte=F('min_stock_level'),
+            is_active=True
+        ).order_by('stock_quantity')
+        
+        serializer = self.get_serializer(medicines, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def expiring_soon(self, request):
+        """Get medicines expiring within 30 days"""
+        days = int(request.query_params.get('days', 30))
+        today = timezone.now().date()
+        cutoff = today + timedelta(days=days)
+        
+        medicines = self.get_queryset().filter(
+            expiry_date__gte=today,
+            expiry_date__lte=cutoff,
+            stock_quantity__gt=0
+        ).order_by('expiry_date')
+        
+        serializer = self.get_serializer(medicines, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def expired(self, request):
+        """Get expired medicines"""
+        today = timezone.now().date()
+        medicines = self.get_queryset().filter(
+            expiry_date__lt=today,
+            stock_quantity__gt=0
+        ).order_by('expiry_date')
+        
+        serializer = self.get_serializer(medicines, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def adjust_stock(self, request, pk=None):
+        """
+        Manual stock adjustment
+        
+        POST /medicines/{id}/adjust_stock/
+        Body: {
+            "adjustment_type": "increase" | "decrease",
+            "quantity": 10,
+            "reason": "Physical count correction"
+        }
+        """
+        medicine = self.get_object()
+        serializer = StockAdjustmentSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            adjustment_type = serializer.validated_data['adjustment_type']
+            quantity = serializer.validated_data['quantity']
+            reason = serializer.validated_data['reason']
+            
+            # Create stock transaction
+            transaction_type = 'adjustment'
+            if adjustment_type == 'decrease':
+                quantity = -quantity
+            
+            # TODO: Move this to a service layer
+            StockTransaction.objects.create(
+                medicine=medicine,
+                transaction_type=transaction_type,
+                quantity=quantity,
+                created_by=request.user,
+                notes=reason
+            )
+            
+            return Response({
+                'message': 'Stock adjusted successfully',
+                'new_stock': medicine.stock_quantity
+            })
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def dashboard_stats(self, request):
+        """
+        Get dashboard statistics
+        
+        Returns:
+        - Total medicines
+        - Low stock count
+        - Expiring soon count
+        - Expired count
+        - Total stock value
+        """
+        queryset = self.get_queryset().filter(is_active=True)
+        today = timezone.now().date()
+        thirty_days = today + timedelta(days=30)
+        
+        # TODO: Move this to a service layer for better performance
+        stats = {
+            'total_medicines': queryset.count(),
+            'low_stock_count': queryset.filter(stock_quantity__lte=F('min_stock_level')).count(),
+            'expiring_soon_count': queryset.filter(
+                expiry_date__gte=today,
+                expiry_date__lte=thirty_days,
+                stock_quantity__gt=0
+            ).count(),
+            'expired_count': queryset.filter(
+                expiry_date__lt=today,
+                stock_quantity__gt=0
+            ).count(),
+            'total_stock_value': queryset.aggregate(
+                total=Sum(F('stock_quantity') * F('purchase_price'))
+            )['total'] or 0
+        }
+        
+        return Response(stats)
+
+
+class StockTransactionViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only ViewSet for stock transaction history
+    
+    list: Get all transactions
+    retrieve: Get single transaction
+    
+    Note: Stock transactions are created automatically by the system
+    or through medicine.adjust_stock() endpoint
+    """
+    
+    queryset = StockTransaction.objects.select_related(
+        'medicine', 'created_by'
+    ).all()
+    serializer_class = StockTransactionSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['medicine', 'transaction_type', 'created_by']
+    ordering_fields = ['transaction_date']
+    ordering = ['-transaction_date']
+    
+    def get_queryset(self):
+        """Filter by date range if provided"""
+        queryset = super().get_queryset()
+        
+        # Filter by date range
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
+        
+        if start_date:
+            queryset = queryset.filter(transaction_date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(transaction_date__lte=end_date)
+        
+        return queryset
+    
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        """
+        Get transaction summary by type
+        
+        Returns count and total quantity for each transaction type
+        """
+        queryset = self.get_queryset()
+        
+        # TODO: Move this to a service layer
+        summary = queryset.values('transaction_type').annotate(
+            count=Count('id'),
+            total_quantity=Sum('quantity')
+        ).order_by('transaction_type')
+        
+        return Response(summary)
