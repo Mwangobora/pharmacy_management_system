@@ -6,20 +6,19 @@ from django.core.validators import RegexValidator
 class UserManager(BaseUserManager):
     """Custom user manager"""
     
-    def create_user(self, username, email, password=None, **extra_fields):
+    def create_user(self, email, password=None, **extra_fields):
         """Create and return a regular user"""
-        if not username:
-            raise ValueError('Users must have a username')
+
         if not email:
             raise ValueError('Users must have an email address')
         
         email = self.normalize_email(email)
-        user = self.model(username=username, email=email, **extra_fields)
+        user = self.model(email=email, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
         return user
     
-    def create_superuser(self, username, email, password=None, **extra_fields):
+    def create_superuser(self,email, password=None, **extra_fields):
         """Create and return a superuser"""
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
@@ -31,7 +30,7 @@ class UserManager(BaseUserManager):
         if extra_fields.get('is_superuser') is not True:
             raise ValueError('Superuser must have is_superuser=True')
         
-        return self.create_user(username, email, password, **extra_fields)
+        return self.create_user( email, password, **extra_fields)
 
 
 class User(AbstractBaseUser, PermissionsMixin):
@@ -46,20 +45,19 @@ class User(AbstractBaseUser, PermissionsMixin):
     
     username = models.CharField(max_length=50, unique=True)
     email = models.EmailField(max_length=100, unique=True)
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES)
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='cashier')
     
     # Django required fields for admin
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
-    is_superuser = models.BooleanField(default=False)
-    
+
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     objects = UserManager()
     
-    USERNAME_FIELD = 'username'
+    USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['email', 'role']
 
     class Meta:
