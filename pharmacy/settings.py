@@ -146,3 +146,11 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 CELERY_BROKER_URL = 'redis://redis:6379/0'
+
+CELERY_BEAT_SCHEDULE = {
+    'Notify Customer Every Minute': {
+        'task': 'suppliers.tasks.notify_customer',
+        'schedule': 60.0,
+        'args': ('This is a periodic notification to customers.',),
+    },
+}
