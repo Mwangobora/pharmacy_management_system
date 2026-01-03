@@ -1,6 +1,38 @@
 version: '3.9'
 
 services:
+  web:
+    build: .
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+    environment:
+      DB_NAME: pharmacy_db
+      DB_USER: pharmacy_user
+      DB_PASSWORD: pharmacy_pass
+      DB_HOST: db
+      DB_PORT: 5432
+
+  celery:
+    build: .
+    command: celery -A pharmacy worker -l info
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+      - redis
+    environment:
+      DB_NAME: pharmacy_db
+      DB_USER: pharmacy_user
+      DB_PASSWORD: pharmacy_pass
+      DB_HOST: db
+      DB_PORT: 5432
+
   db:
     image: postgres:16
     container_name: pharmacy_db
@@ -12,27 +44,10 @@ services:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
+
   redis:
     image: redis:7
     container_name: pharmacy_redis
-    ports:
-      - "6379:6379"
-
-  web:
-    build: .
-    command: python manage.py runserver 0.0.0.0:8000
-    volumes:
-      - .:/app
-    ports:
-      - "8000:8000"
-    depends_on:
-      - db
-    environment:
-      DB_NAME: pharmacy_db
-      DB_USER: pharmacy_user
-      DB_PASSWORD: pharmacy_pass
-      DB_HOST: db
-      DB_PORT: 5432
 
 volumes:
   postgres_data:

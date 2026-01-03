@@ -13,11 +13,11 @@ class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Supplier
         fields = [
-            'id', 'supplier_id', 'name', 'contact_person', 'phone', 'email',
+            'id', 'name', 'contact_person', 'phone', 'email',
             'address', 'tax_id', 'is_active', 'created_at', 'updated_at',
             'total_purchases', 'active_medicines_count'
         ]
-        read_only_fields = ['id', 'supplier_id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
     
     def get_total_purchases(self, obj):
         """Return total number of purchases from this supplier"""
@@ -33,7 +33,7 @@ class SupplierListSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Supplier
-        fields = ['id', 'supplier_id', 'name', 'phone', 'email', 'is_active']
+        fields = ['id', 'name', 'phone', 'email', 'is_active']
 
 
 class PurchaseItemSerializer(serializers.ModelSerializer):
@@ -83,7 +83,7 @@ class PurchaseListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Purchase
         fields = [
-            'id', 'purchase_id', 'invoice_number', 'supplier_name', 
+            'id', 'invoice_number', 'supplier_name', 
             'purchase_date', 'net_amount', 'payment_status', 
             'payment_status_display', 'items_count', 'created_by_username'
         ]
@@ -105,7 +105,7 @@ class PurchaseDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Purchase
         fields = '__all__'
-        read_only_fields = ['id', 'purchase_id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
     
     def get_amount_paid(self, obj):
         """Calculate total amount paid (TODO: Move to Payment model integration)"""
