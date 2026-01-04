@@ -22,7 +22,7 @@ from services.sales_service import SalesService
 
 class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['gender']
     search_fields = ['first_name', 'last_name', 'phone', 'email']
@@ -94,7 +94,7 @@ class SaleViewSet(viewsets.ModelViewSet):
     queryset = Sale.objects.select_related(
         'customer', 'served_by'
     ).prefetch_related('items', 'payments').all()
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['customer', 'payment_method', 'payment_status', 'served_by']
     search_fields = ['invoice_number', 'customer__first_name', 'customer__last_name']
@@ -128,7 +128,6 @@ class SaleViewSet(viewsets.ModelViewSet):
 
     
     @action(detail=False, methods=['post'])
-
     def create_with_items(self, request):
         serializer = CreateSaleSerializer(data=request.data)
 
@@ -146,7 +145,6 @@ class SaleViewSet(viewsets.ModelViewSet):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'])
-
     def process_payment(self, request, pk=None):
         """Process additional payment for a sale."""
         sale = self.get_object()
@@ -172,8 +170,6 @@ class SaleViewSet(viewsets.ModelViewSet):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'])
-
-
     def refund(self, request, pk=None):
         sale = self.get_object()
         serializer = RefundSaleSerializer(data=request.data)
@@ -197,7 +193,6 @@ class SaleViewSet(viewsets.ModelViewSet):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=False, methods=['get'])
-
     def daily_summary(self, request):
     
         date_str = request.query_params.get('date')
@@ -211,8 +206,6 @@ class SaleViewSet(viewsets.ModelViewSet):
         return Response(summary)
     
     @action(detail=False, methods=['get'])
-
-
     def top_selling(self, request):
         days = int(request.query_params.get('days', 30))
         limit = int(request.query_params.get('limit', 10))
@@ -224,7 +217,7 @@ class SaleViewSet(viewsets.ModelViewSet):
 class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Payment.objects.select_related('sale', 'received_by').all()
     serializer_class = PaymentSerializer
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['sale', 'payment_method', 'received_by']
     ordering_fields = ['payment_date', 'amount']

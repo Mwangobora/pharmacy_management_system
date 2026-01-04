@@ -14,12 +14,12 @@ class CustomerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Customer
         fields = [
-            'id', 'customer_id', 'first_name', 'last_name', 'full_name',
+            'id', 'first_name', 'last_name', 'full_name',
             'phone', 'email', 'address', 'date_of_birth', 'gender',
             'loyalty_points', 'created_at', 'updated_at',
             'total_purchases', 'total_spent'
         ]
-        read_only_fields = ['id', 'customer_id', 'full_name', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'full_name', 'created_at', 'updated_at']
     
     def get_total_purchases(self, obj):
         """Return total number of purchases"""
