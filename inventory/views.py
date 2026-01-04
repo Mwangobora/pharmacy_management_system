@@ -1,7 +1,6 @@
-from rest_framework import viewsets, status, filters
+from rest_framework import viewsets, status, filters, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, F, Sum, Count
 from django.utils import timezone
@@ -12,6 +11,7 @@ from .serializers import (
     CategorySerializer, MedicineListSerializer, MedicineDetailSerializer,
     StockTransactionSerializer, StockAdjustmentSerializer
 )
+from services.inventory_service import InventoryService
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
@@ -189,19 +189,12 @@ class MedicineViewSet(viewsets.ModelViewSet):
             quantity = serializer.validated_data['quantity']
             reason = serializer.validated_data['reason']
             
-            # Create stock transaction
-            transaction_type = 'adjustment'
-            if adjustment_type == 'decrease':
-                quantity = -quantity
-            
-            # TODO: Move this to a service layer
-            StockTransaction.objects.create(
-                medicine=medicine,
-                transaction_type=transaction_type,
-                quantity=quantity,
-                created_by=request.user,
-                notes=reason
-            )
+            try:
+                result = InventoryService.adjust_stock(
+                    medicine, quantity, adjustment_type, request.user, reason
+                )
+            except Exception as e:
+                return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
             return Response({
                 'message': 'Stock adjusted successfully',
@@ -222,28 +215,7 @@ class MedicineViewSet(viewsets.ModelViewSet):
         - Expired count
         - Total stock value
         """
-        queryset = self.get_queryset().filter(is_active=True)
-        today = timezone.now().date()
-        thirty_days = today + timedelta(days=30)
-        
-        # TODO: Move this to a service layer for better performance
-        stats = {
-            'total_medicines': queryset.count(),
-            'low_stock_count': queryset.filter(stock_quantity__lte=F('min_stock_level')).count(),
-            'expiring_soon_count': queryset.filter(
-                expiry_date__gte=today,
-                expiry_date__lte=thirty_days,
-                stock_quantity__gt=0
-            ).count(),
-            'expired_count': queryset.filter(
-                expiry_date__lt=today,
-                stock_quantity__gt=0
-            ).count(),
-            'total_stock_value': queryset.aggregate(
-                total=Sum(F('stock_quantity') * F('purchase_price'))
-            )['total'] or 0
-        }
-        
+        stats = InventoryService.get_dashboard_stats(is_active_only=True)
         return Response(stats)
 
 
@@ -290,12 +262,8 @@ class StockTransactionViewSet(viewsets.ReadOnlyModelViewSet):
         
         Returns count and total quantity for each transaction type
         """
-        queryset = self.get_queryset()
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
         
-        # TODO: Move this to a service layer
-        summary = queryset.values('transaction_type').annotate(
-            count=Count('id'),
-            total_quantity=Sum('quantity')
-        ).order_by('transaction_type')
-        
+        summary = InventoryService.get_transaction_summary(start_date, end_date)
         return Response(summary)

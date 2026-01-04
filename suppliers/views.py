@@ -1,10 +1,8 @@
-from rest_framework import viewsets, status, filters
+from rest_framework import viewsets, status, filters, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Sum, Count, F
-from django.db import transaction
 from django.utils import timezone
 
 from .models import Supplier, Purchase, PurchaseItem
@@ -15,6 +13,7 @@ from .serializers import (
     ReceiveItemsSerializer
 )
 from inventory.models import StockTransaction
+from services.supplier_service import SupplierService, PurchaseService
 
 
 class SupplierViewSet(viewsets.ModelViewSet):
@@ -92,23 +91,7 @@ class SupplierViewSet(viewsets.ModelViewSet):
         - Active medicines
         """
         supplier = self.get_object()
-        
-        # TODO: Move this to a service layer for better performance and caching
-        stats = {
-            'total_purchases': supplier.purchases.count(),
-            'total_amount_spent': supplier.purchases.aggregate(
-                total=Sum('net_amount')
-            )['total'] or 0,
-            'pending_payments': supplier.purchases.filter(
-                payment_status__in=['pending', 'partial']
-            ).aggregate(
-                total=Sum('net_amount')
-            )['total'] or 0,
-            'active_medicines': supplier.medicines.filter(is_active=True).count(),
-            'last_purchase_date': supplier.purchases.order_by('-purchase_date').first().purchase_date
-                if supplier.purchases.exists() else None
-        }
-        
+        stats = SupplierService.get_supplier_stats(supplier)
         return Response(stats)
 
 
@@ -190,118 +173,40 @@ class PurchaseViewSet(viewsets.ModelViewSet):
         serializer = CreatePurchaseSerializer(data=request.data)
         
         if serializer.is_valid():
-            # TODO: Move this entire logic to a service layer (services.py)
-            with transaction.atomic():
-                # Calculate totals from items
-                items_data = serializer.validated_data.pop('items')
-                total_amount = sum(
-                    item['quantity'] * item['unit_price'] 
-                    for item in items_data
-                )
-                
-                # Create purchase
-                purchase = Purchase.objects.create(
-                    supplier=serializer.validated_data['supplier'],
-                    invoice_number=serializer.validated_data['invoice_number'],
-                    purchase_date=serializer.validated_data['purchase_date'],
-                    total_amount=total_amount,
-                    tax_amount=serializer.validated_data.get('tax_amount', 0),
-                    discount_amount=serializer.validated_data.get('discount_amount', 0),
-                    net_amount=total_amount + serializer.validated_data.get('tax_amount', 0) 
-                               - serializer.validated_data.get('discount_amount', 0),
-                    payment_status=serializer.validated_data.get('payment_status', 'pending'),
-                    notes=serializer.validated_data.get('notes', ''),
-                    created_by=request.user
-                )
-                
-                # Create purchase items
-                for item_data in items_data:
-                    PurchaseItem.objects.create(
-                        purchase=purchase,
-                        medicine_id=item_data['medicine'],
-                        quantity=item_data['quantity'],
-                        unit_price=item_data['unit_price'],
-                        discount_percent=item_data.get('discount_percent', 0),
-                        tax_percent=item_data.get('tax_percent', 0)
-                    )
-                
-                # Return created purchase
-                response_serializer = PurchaseDetailSerializer(purchase)
-                return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            try:
+                purchase = PurchaseService.create_purchase_with_items(request.user, serializer.validated_data)
+            except serializers.ValidationError as e:
+                return Response({'error': e.detail}, status=status.HTTP_400_BAD_REQUEST)
+            except Exception as e:
+                return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            response_serializer = PurchaseDetailSerializer(purchase)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'])
     def receive_items(self, request, pk=None):
-        """
-        Mark items as received and update stock
-        
-        POST /purchases/{id}/receive-items/
-        Body: {
-            "items": [
-                {"item_id": 1, "received_quantity": 100},
-                {"item_id": 2, "received_quantity": 50}
-            ]
-        }
-        """
         purchase = self.get_object()
         serializer = ReceiveItemsSerializer(data=request.data)
         
         if serializer.is_valid():
-            # TODO: Move this to a service layer
-            with transaction.atomic():
-                for item_data in serializer.validated_data['items']:
-                    try:
-                        item = PurchaseItem.objects.get(
-                            pk=item_data['item_id'],
-                            purchase=purchase
-                        )
-                        
-                        received_qty = item_data['received_quantity']
-                        
-                        # Validate received quantity
-                        if received_qty > item.quantity:
-                            return Response(
-                                {'error': f'Received quantity ({received_qty}) exceeds ordered quantity ({item.quantity})'},
-                                status=status.HTTP_400_BAD_REQUEST
-                            )
-                        
-                        # Update received quantity
-                        item.received_quantity = received_qty
-                        item.save()
-                        
-                        # Create stock transaction (increase stock)
-                        StockTransaction.objects.create(
-                            medicine=item.medicine,
-                            transaction_type='purchase',
-                            quantity=received_qty,
-                            reference_type='purchase',
-                            reference_id=purchase.id,
-                            notes=f'Received from purchase {purchase.invoice_number}',
-                            created_by=request.user
-                        )
-                        
-                    except PurchaseItem.DoesNotExist:
-                        return Response(
-                            {'error': f'Purchase item {item_data["item_id"]} not found'},
-                            status=status.HTTP_404_NOT_FOUND
-                        )
-                
-                return Response({
-                    'message': 'Items received successfully',
-                    'purchase_id': purchase.id
-                })
+            try:
+                result = PurchaseService.receive_items(purchase, serializer.validated_data['items'], request.user)
+            except serializers.ValidationError as e:
+                return Response({'error': e.detail}, status=status.HTTP_400_BAD_REQUEST)
+            except Exception as e:
+                return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            return Response({
+                'message': 'Items received successfully',
+                **result
+            })
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['patch'])
     def update_payment_status(self, request, pk=None):
-        """
-        Update payment status
-        
-        PATCH /purchases/{id}/update-payment-status/
-        Body: {"payment_status": "paid"}
-        """
         purchase = self.get_object()
         new_status = request.data.get('payment_status')
         
@@ -329,42 +234,10 @@ class PurchaseViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['get'])
     def dashboard_stats(self, request):
-        """
-        Get purchase dashboard statistics
-        
-        Returns:
-        - Total purchases
-        - Total amount
-        - Pending payments
-        - Recent purchases
-        """
         queryset = self.get_queryset()
-        
-        # TODO: Move this to a service layer and add caching
-        stats = {
-            'total_purchases': queryset.count(),
-            'total_amount': queryset.aggregate(total=Sum('net_amount'))['total'] or 0,
-            'pending_amount': queryset.filter(
-                payment_status__in=['pending', 'partial']
-            ).aggregate(total=Sum('net_amount'))['total'] or 0,
-            'paid_amount': queryset.filter(
-                payment_status='paid'
-            ).aggregate(total=Sum('net_amount'))['total'] or 0,
-            'recent_purchases_count': queryset.filter(
-                purchase_date__gte=timezone.now().date() - timezone.timedelta(days=30)
-            ).count()
-        }
-        
+        stats = PurchaseService.get_purchase_dashboard_stats(queryset)
         return Response(stats)
-
-
 class PurchaseItemViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    Read-only ViewSet for purchase items
-    
-    Items are created through Purchase create_with_items endpoint
-    """
-    
     queryset = PurchaseItem.objects.select_related('purchase', 'medicine').all()
     serializer_class = PurchaseItemSerializer
     # permission_classes = [IsAuthenticated]
