@@ -21,6 +21,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from inventory.views import CategoryViewSet, MedicineViewSet, StockTransactionViewSet
 from suppliers.views import SupplierViewSet, PurchaseViewSet, PurchaseItemViewSet
+from sales.views import CustomerViewSet as SalesCustomerViewSet, SaleViewSet, PaymentViewSet
 
 # Create a single root router
 router = DefaultRouter()
@@ -30,6 +31,9 @@ router.register(r'stock-transactions', StockTransactionViewSet, basename='stock-
 router.register(r'suppliers', SupplierViewSet, basename='supplier')
 router.register(r'purchases', PurchaseViewSet, basename='purchase')
 router.register(r'purchase-items', PurchaseItemViewSet, basename='purchase-item')
+router.register(r'customers', SalesCustomerViewSet, basename='customer')
+router.register(r'sales', SaleViewSet, basename='sale')
+router.register(r'payments', PaymentViewSet, basename='payment')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
