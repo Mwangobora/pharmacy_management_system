@@ -9,3 +9,4 @@ django-redis>=5.4
 celery>=5.2.7
 djoser
 djangorestframework_simplejwt
+django-cors-headers
