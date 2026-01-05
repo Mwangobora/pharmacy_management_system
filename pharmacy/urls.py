@@ -18,10 +18,12 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path, include
+from django.views.generic import RedirectView
 from rest_framework.routers import DefaultRouter
 from inventory.views import CategoryViewSet, MedicineViewSet, StockTransactionViewSet
 from suppliers.views import SupplierViewSet, PurchaseViewSet, PurchaseItemViewSet
 from sales.views import CustomerViewSet as SalesCustomerViewSet, SaleViewSet, PaymentViewSet
+from users.views import UserViewSet
 
 # Create a single root router
 router = DefaultRouter()
@@ -34,8 +36,10 @@ router.register(r'purchase-items', PurchaseItemViewSet, basename='purchase-item'
 router.register(r'customers', SalesCustomerViewSet, basename='customer')
 router.register(r'sales', SaleViewSet, basename='sale')
 router.register(r'payments', PaymentViewSet, basename='payment')
+router.register(r'users', UserViewSet, basename='user')
 
 urlpatterns = [
+    path('', RedirectView.as_view(url='api/', permanent=False)),
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
     # Authentication endpoints (Djoser + JWT)
