@@ -1,7 +1,6 @@
 import uuid
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-from django.core.validators import RegexValidator
 
 
 class UserManager(BaseUserManager):
@@ -19,36 +18,49 @@ class UserManager(BaseUserManager):
         user.save(using=self._db)
         return user
     
-    def create_superuser(self,email, password=None, **extra_fields):
+    def create_superuser(self, email, password=None, **extra_fields):
         """Create and return a superuser"""
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('is_active', True)
-        extra_fields.setdefault('role', 'admin')
-        
+
         if extra_fields.get('is_staff') is not True:
             raise ValueError('Superuser must have is_staff=True')
         if extra_fields.get('is_superuser') is not True:
             raise ValueError('Superuser must have is_superuser=True')
         
-        return self.create_user( email, password, **extra_fields)
+        return self.create_user(email, password, **extra_fields)
+
+
+class Role(models.Model):
+    """User role managed from the admin panel"""
+
+    name = models.CharField(max_length=50, unique=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'roles'
+        verbose_name = 'Role'
+        verbose_name_plural = 'Roles'
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['name']),
+            models.Index(fields=['is_active']),
+        ]
+
+    def __str__(self):
+        return self.name
 
 
 class User(AbstractBaseUser, PermissionsMixin):
     """Custom user model for pharmacy staff"""
     
-
-    ROLE_CHOICES = [
-        ('admin', 'Admin'),
-        ('pharmacist', 'Pharmacist'),
-        ('cashier', 'Cashier'),
-        ('manager', 'Manager'),
-    ]
-    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     username = models.CharField(max_length=50, unique=True)
     email = models.EmailField(max_length=100, unique=True)
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='cashier')
+    role = models.ForeignKey(Role, on_delete=models.PROTECT, null=True, blank=True, related_name='users')
     
     # Django required fields for admin
     is_active = models.BooleanField(default=True)
@@ -61,7 +73,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     objects = UserManager()
     
     USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['role']
+    REQUIRED_FIELDS = ['username']
 
     class Meta:
         db_table = 'users'
@@ -75,24 +87,25 @@ class User(AbstractBaseUser, PermissionsMixin):
         ]
 
     def __str__(self):
-        return f"{self.username} ({self.get_role_display()})"
+        role_name = self.role.name if self.role else 'No role'
+        return f"{self.username} ({role_name})"
 
     @property
     def is_admin(self):
         """Check if user is admin"""
-        return self.role == 'admin' or self.is_superuser
+        return (self.role is not None and self.role.name == 'admin') or self.is_superuser
 
     @property
     def is_pharmacist(self):
         """Check if user is pharmacist"""
-        return self.role == 'pharmacist'
+        return self.role is not None and self.role.name == 'pharmacist'
 
     @property
     def is_cashier(self):
         """Check if user is cashier"""
-        return self.role == 'cashier'
+        return self.role is not None and self.role.name == 'cashier'
 
     @property
     def is_manager(self):
         """Check if user is manager"""
-        return self.role == 'manager'
+        return self.role is not None and self.role.name == 'manager'

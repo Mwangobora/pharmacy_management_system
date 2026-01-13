@@ -1,6 +1,14 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from .models import User
+from .models import Role, User
+
+
+@admin.register(Role)
+class RoleAdmin(admin.ModelAdmin):
+	list_display = ('name', 'is_active', 'created_at')
+	list_filter = ('is_active',)
+	search_fields = ('name',)
+	ordering = ('name',)
 
 
 @admin.register(User)

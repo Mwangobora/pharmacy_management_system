@@ -1,9 +1,11 @@
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from .models import User
-from .serializers import UserSerializer
+from rest_framework.permissions import AllowAny
+from django.contrib.auth.models import Permission
+from .models import Role, User
+from .serializers import PermissionSerializer, RoleSerializer, UserSerializer
+from .permissions import AdminOrModelPermissions
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -21,7 +23,7 @@ class UserViewSet(viewsets.ModelViewSet):
         """
         if self.action in ['auth_info', 'list']:
             return [AllowAny()]
-        return [IsAuthenticated()]
+        return [AdminOrModelPermissions()]
     
     @action(detail=False, methods=['get'], name='Auth Info', permission_classes=[AllowAny])
     def auth_info(self, request):
@@ -38,3 +40,17 @@ class UserViewSet(viewsets.ModelViewSet):
                 'current_user': '/api/auth/users/me/',
             }
         })
+
+
+class RoleViewSet(viewsets.ModelViewSet):
+    """ViewSet for role management."""
+    queryset = Role.objects.all()
+    serializer_class = RoleSerializer
+    permission_classes = [AdminOrModelPermissions]
+
+
+class PermissionViewSet(viewsets.ModelViewSet):
+    """ViewSet for permission management."""
+    queryset = Permission.objects.select_related('content_type').all()
+    serializer_class = PermissionSerializer
+    permission_classes = [AdminOrModelPermissions]

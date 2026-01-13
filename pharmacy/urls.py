@@ -23,7 +23,7 @@ from rest_framework.routers import DefaultRouter
 from inventory.views import CategoryViewSet, MedicineViewSet, StockTransactionViewSet
 from suppliers.views import SupplierViewSet, PurchaseViewSet, PurchaseItemViewSet
 from sales.views import CustomerViewSet as SalesCustomerViewSet, SaleViewSet, PaymentViewSet
-from users.views import UserViewSet
+from users.views import PermissionViewSet, RoleViewSet, UserViewSet
 
 # Create a single root router
 router = DefaultRouter()
@@ -37,6 +37,8 @@ router.register(r'customers', SalesCustomerViewSet, basename='customer')
 router.register(r'sales', SaleViewSet, basename='sale')
 router.register(r'payments', PaymentViewSet, basename='payment')
 router.register(r'users', UserViewSet, basename='user')
+router.register(r'roles', RoleViewSet, basename='role')
+router.register(r'permissions', PermissionViewSet, basename='permission')
 
 urlpatterns = [
     path('', RedirectView.as_view(url='api/', permanent=False)),
