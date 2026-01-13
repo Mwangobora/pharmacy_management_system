@@ -1,6 +1,6 @@
 import uuid
 from django.db import models
-from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin, Permission
 
 
 class UserManager(BaseUserManager):
@@ -36,6 +36,7 @@ class Role(models.Model):
     """User role managed from the admin panel"""
 
     name = models.CharField(max_length=50, unique=True)
+    permissions = models.ManyToManyField(Permission, blank=True, related_name='roles')
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

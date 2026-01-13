@@ -4,13 +4,6 @@ from .models import Role, User
 from djoser.serializers import UserCreateSerializer as DjoserUserCreateSerializer
 
 
-class RoleSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Role
-        fields = ['id', 'name', 'is_active', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
-
-
 class PermissionSerializer(serializers.ModelSerializer):
     content_type_label = serializers.CharField(source='content_type.app_label', read_only=True)
     content_type_model = serializers.CharField(source='content_type.model', read_only=True)
@@ -21,13 +14,28 @@ class PermissionSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
 
 
+class RoleSerializer(serializers.ModelSerializer):
+    permissions = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=Permission.objects.all(),
+        required=False,
+    )
+    permissions_detail = PermissionSerializer(source='permissions', many=True, read_only=True)
+
+    class Meta:
+        model = Role
+        fields = ['id', 'name', 'permissions', 'permissions_detail', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
 class UserSerializer(serializers.ModelSerializer):
     role_name = serializers.CharField(source='role.name', read_only=True)
+    role_detail = RoleSerializer(source='role', read_only=True)
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'role', 'role_name', 'is_active', 'is_staff', 'created_at']
-        read_only_fields = ['id', 'role','is_active', 'is_staff', 'created_at']
+        fields = ['id', 'username', 'email', 'role', 'role_name', 'role_detail', 'is_active', 'is_staff', 'created_at']
+        read_only_fields = ['id', 'is_active', 'is_staff', 'created_at']
 
 
 class UserCreateSerializer(DjoserUserCreateSerializer):

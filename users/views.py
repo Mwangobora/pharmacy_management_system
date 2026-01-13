@@ -13,7 +13,7 @@ class UserViewSet(viewsets.ModelViewSet):
     ViewSet for user management.
     Includes auth endpoints for register, login, logout, password reset.
     """
-    queryset = User.objects.all()
+    queryset = User.objects.select_related('role').prefetch_related('role__permissions')
     serializer_class = UserSerializer
     
     def get_permissions(self):
@@ -44,7 +44,7 @@ class UserViewSet(viewsets.ModelViewSet):
 
 class RoleViewSet(viewsets.ModelViewSet):
     """ViewSet for role management."""
-    queryset = Role.objects.all()
+    queryset = Role.objects.prefetch_related('permissions')
     serializer_class = RoleSerializer
     permission_classes = [AdminOrModelPermissions]
 

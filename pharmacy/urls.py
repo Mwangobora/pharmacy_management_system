@@ -20,10 +20,11 @@ from django.contrib import admin
 from django.urls import path, include
 from django.views.generic import RedirectView
 from rest_framework.routers import DefaultRouter
+from rest_framework_simplejwt.views import TokenObtainPairView
+from djoser.views import UserViewSet as DjoserUserViewSet
 from inventory.views import CategoryViewSet, MedicineViewSet, StockTransactionViewSet
 from suppliers.views import SupplierViewSet, PurchaseViewSet, PurchaseItemViewSet
 from sales.views import CustomerViewSet as SalesCustomerViewSet, SaleViewSet, PaymentViewSet
-from users.views import PermissionViewSet, RoleViewSet, UserViewSet
 
 # Create a single root router
 router = DefaultRouter()
@@ -36,14 +37,15 @@ router.register(r'purchase-items', PurchaseItemViewSet, basename='purchase-item'
 router.register(r'customers', SalesCustomerViewSet, basename='customer')
 router.register(r'sales', SaleViewSet, basename='sale')
 router.register(r'payments', PaymentViewSet, basename='payment')
-router.register(r'users', UserViewSet, basename='user')
-router.register(r'roles', RoleViewSet, basename='role')
-router.register(r'permissions', PermissionViewSet, basename='permission')
 
 urlpatterns = [
     path('', RedirectView.as_view(url='api/', permanent=False)),
     path('admin/', admin.site.urls),
+    path('api/auth/register/', DjoserUserViewSet.as_view({'post': 'create'}), name='register'),
+    path('api/auth/login/', TokenObtainPairView.as_view(), name='login'),
     path('api/', include(router.urls)),
+    path('api/users/', include('users.urls')),
+    path('api/auth/', include('users.auth_urls')),
     # Authentication endpoints (Djoser + JWT)
     path('api/auth/', include('djoser.urls')),
     path('api/auth/', include('djoser.urls.jwt')),
