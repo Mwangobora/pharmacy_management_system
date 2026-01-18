@@ -37,7 +37,7 @@ class CustomerListSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Customer
-        fields = ['id', 'customer_id', 'full_name', 'phone', 'email', 'loyalty_points']
+        fields = ['id', 'full_name', 'phone', 'email', 'loyalty_points']
 
 
 class PaymentSerializer(serializers.ModelSerializer):

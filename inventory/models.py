@@ -171,7 +171,7 @@ class StockTransaction(BaseModel):
     
     # Reference to related transaction
     reference_type = models.CharField(max_length=50, blank=True, null=True)
-    reference_id = models.IntegerField(blank=True, null=True)
+    reference_id = models.CharField(max_length=64, blank=True, null=True)
     
     notes = models.TextField(blank=True, null=True)
     created_by = models.ForeignKey(
