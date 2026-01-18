@@ -20,13 +20,13 @@ class UserAdmin(BaseUserAdmin):
 	ordering = ('email',)
 	fieldsets = (
 		(None, {'fields': ('email', 'password')}),
-		('Personal info', {'fields': ('username', 'role','permissions')}),
+		('Personal info', {'fields': ('username', 'role')}),
 		('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
 		('Important dates', {'fields': ('last_login',)}),
 	)
 	add_fieldsets = (
 		(None, {
 			'classes': ('wide',),
-			'fields': ('email', 'username', 'password1', 'password2', 'role', 'permissions'),
+			'fields': ('email', 'username', 'password1', 'password2', 'role', 'groups', 'user_permissions'),
 		}),
 	)
