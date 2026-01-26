@@ -33,7 +33,7 @@ class MedicineListSerializer(serializers.ModelSerializer):
         model = Medicine
         fields = [
             'id', 'name', 'generic_name', 'category_name', 'supplier_name',
-            'batch_number', 'expiry_date', 'selling_price', 'stock_quantity',
+            'batch_number', 'expiry_date', 'purchase_price', 'selling_price', 'stock_quantity',
             'unit', 'stock_status', 'expiry_status', 'requires_prescription'
         ]
     
@@ -161,4 +161,3 @@ class StockAdjustmentSerializer(serializers.Serializer):
         if not Medicine.objects.filter(id=value).exists():
             raise serializers.ValidationError("Medicine not found")
         return value
-

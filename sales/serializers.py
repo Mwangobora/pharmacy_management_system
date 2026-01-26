@@ -49,11 +49,11 @@ class PaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payment
         fields = [
-            'id', 'payment_id', 'sale', 'amount', 'payment_method',
+            'id', 'sale', 'amount', 'payment_method',
             'payment_method_display', 'payment_date', 'transaction_ref',
             'received_by', 'received_by_username', 'notes', 'created_at'
         ]
-        read_only_fields = ['id', 'payment_id', 'payment_date', 'created_at']
+        read_only_fields = ['id', 'payment_date', 'created_at']
     
     def validate_amount(self, value):
         """Ensure amount is positive"""
@@ -154,7 +154,7 @@ class SaleListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Sale
         fields = [
-            'id', 'sale_id', 'invoice_number', 'customer', 'customer_name',
+            'id', 'invoice_number', 'customer', 'customer_name',
             'sale_date', 'net_amount', 'payment_method', 'payment_method_display',
             'payment_status', 'payment_status_display', 'served_by_username',
             'items_count'
@@ -183,7 +183,7 @@ class SaleDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Sale
         fields = '__all__'
-        read_only_fields = ['id', 'sale_id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
     
     def get_customer_name(self, obj):
         return obj.customer.full_name if obj.customer else "Walk-in"

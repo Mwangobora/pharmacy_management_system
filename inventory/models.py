@@ -194,7 +194,7 @@ class StockTransaction(BaseModel):
 
     def save(self, *args, **kwargs):
         """Auto-update medicine stock quantity on transaction creation"""
-        if not self.pk:  # Only on new transactions
+        if self._state.adding:  # Only on new transactions
             from django.db import transaction as db_transaction
             
             with db_transaction.atomic():
