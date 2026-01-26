@@ -20,8 +20,9 @@ from django.contrib import admin
 from django.urls import path, include
 from django.views.generic import RedirectView
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenObtainPairView
 from djoser.views import UserViewSet as DjoserUserViewSet
+from users.serializers import CustomTokenObtainPairSerializer
+from rest_framework_simplejwt.views import TokenObtainPairView
 from inventory.views import CategoryViewSet, MedicineViewSet, StockTransactionViewSet
 from suppliers.views import SupplierViewSet, PurchaseViewSet, PurchaseItemViewSet
 from sales.views import CustomerViewSet as SalesCustomerViewSet, SaleViewSet, PaymentViewSet
@@ -42,7 +43,7 @@ urlpatterns = [
     path('', RedirectView.as_view(url='api/', permanent=False)),
     path('admin/', admin.site.urls),
     path('api/auth/register/', DjoserUserViewSet.as_view({'post': 'create'}), name='register'),
-    path('api/auth/login/', TokenObtainPairView.as_view(), name='login'),
+    path('api/auth/login/', TokenObtainPairView.as_view(serializer_class=CustomTokenObtainPairSerializer), name='login'),
     path('api/', include(router.urls)),
     path('api/users/', include('users.urls')),
     path('api/auth/', include('users.auth_urls')),
