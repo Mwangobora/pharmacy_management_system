@@ -2,7 +2,8 @@ from rest_framework import viewsets, status, filters, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q, F, Sum, Count
+from django.db.models import F, Sum, Count, Max
+from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
 
@@ -48,6 +49,33 @@ class CategoryViewSet(viewsets.ModelViewSet):
         """Soft delete: mark as inactive instead of deleting"""
         instance.is_active = False
         instance.save()
+
+    @action(detail=False, methods=['post'])
+    def bulk(self, request):
+        """Bulk create categories"""
+        if not isinstance(request.data, list):
+            raise serializers.ValidationError('Expected a list of category objects.')
+
+        serializer = self.get_serializer(data=request.data, many=True)
+        serializer.is_valid(raise_exception=True)
+        created = []
+        max_code = Category.objects.filter(code__regex=r'^CAT\d+$').aggregate(
+            max_code=Max('code')
+        )['max_code']
+        next_num = int(max_code.replace('CAT', '')) + 1 if max_code else 1
+
+        with transaction.atomic():
+            for item in serializer.validated_data:
+                if not item.get('code'):
+                    item['code'] = f"CAT{next_num:03d}"
+                    next_num += 1
+                category = Category(**item)
+                category.save()
+                created.append(category)
+
+        output = self.get_serializer(created, many=True)
+        return Response(output.data, status=status.HTTP_201_CREATED)
+
     
     @action(detail=True, methods=['get'])
     def medicines(self, request, pk=None):

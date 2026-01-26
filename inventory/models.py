@@ -39,23 +39,19 @@ class Category(BaseModel):
     
     def save(self, *args, **kwargs):
         if not self.code:
-            # Get the highest existing code number
-            last_code = Category.objects.aggregate(
+            # Get the highest existing CAT### code only
+            last_code = Category.objects.filter(code__regex=r'^CAT\d+$').aggregate(
                 max_code=Max('code')
             )['max_code']
-            
+
             if last_code:
-                # Extract number: CAT001 -> 1
-                try:
-                    last_num = int(last_code.replace('CAT', ''))
-                    new_num = last_num + 1
-                except ValueError:
-                    new_num = 1
+                last_num = int(last_code.replace('CAT', ''))
+                new_num = last_num + 1
             else:
                 new_num = 1
-            
+
             self.code = f"CAT{new_num:03d}"
-        
+
         super().save(*args, **kwargs)
 
 

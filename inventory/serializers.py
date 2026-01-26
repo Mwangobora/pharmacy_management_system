@@ -98,6 +98,12 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
     
     def validate(self, data):
         """Cross-field validation"""
+        # Normalize optional string fields
+        if data.get('barcode') == '':
+            data['barcode'] = None
+        if data.get('storage_location') == '':
+            data['storage_location'] = None
+
         # Ensure selling price > purchase price
         purchase_price = data.get('purchase_price')
         selling_price = data.get('selling_price')
@@ -155,5 +161,4 @@ class StockAdjustmentSerializer(serializers.Serializer):
         if not Medicine.objects.filter(id=value).exists():
             raise serializers.ValidationError("Medicine not found")
         return value
-
 

@@ -12,6 +12,7 @@ Base path: `/api/categories/`
 - `PUT/PATCH /api/categories/{id}/` -> Update category.
 - `DELETE /api/categories/{id}/` -> Soft delete (sets `is_active=false`).
 - `GET /api/categories/{id}/medicines/` -> Medicines for category.
+- `POST /api/categories/bulk/` -> Bulk create categories (body is a JSON array).
 
 Category fields:
 - `id` (uuid, read-only)
