@@ -157,8 +157,8 @@ class CreatePurchaseSerializer(serializers.Serializer):
     supplier = serializers.PrimaryKeyRelatedField(queryset=Supplier.objects.all())
     invoice_number = serializers.CharField(max_length=50)
     purchase_date = serializers.DateField()
-    tax_amount = serializers.DecimalField(max_digits=12, decimal_places=2, default=0)
-    discount_amount = serializers.DecimalField(max_digits=12, decimal_places=2, default=0)
+    tax_amount = serializers.DecimalField(max_digits=12, decimal_places=2, default=0, required=False)
+    discount_amount = serializers.DecimalField(max_digits=12, decimal_places=2, default=0, required=False)
     payment_status = serializers.ChoiceField(choices=Purchase.PAYMENT_STATUS_CHOICES, default='pending')
     notes = serializers.CharField(required=False, allow_blank=True)
     
@@ -187,6 +187,16 @@ class CreatePurchaseSerializer(serializers.Serializer):
             # Validate quantity
             if item['quantity'] <= 0:
                 raise serializers.ValidationError("Quantity must be greater than 0")
+
+            # Validate unit cost
+            if Decimal(item['unit_price']) <= 0:
+                raise serializers.ValidationError("Unit price must be greater than 0")
+
+            # Optional lot metadata passed from procurement UI.
+            expiry_date = item.get('expiry_date')
+            manufacture_date = item.get('manufacture_date')
+            if manufacture_date and expiry_date and manufacture_date >= expiry_date:
+                raise serializers.ValidationError("Expiry date must be after manufacture date")
         
         return value
     
@@ -218,6 +228,5 @@ class ReceiveItemsSerializer(serializers.Serializer):
                 raise serializers.ValidationError("Received quantity cannot be negative")
         
         return value
-
 
 

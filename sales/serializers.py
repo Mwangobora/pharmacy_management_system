@@ -242,9 +242,9 @@ class CreateSaleSerializer(serializers.Serializer):
         required=False,
         allow_null=True
     )
-    sale_date = serializers.DateTimeField()
-    tax_amount = serializers.DecimalField(max_digits=12, decimal_places=2, default=0)
-    discount_amount = serializers.DecimalField(max_digits=12, decimal_places=2, default=0)
+    sale_date = serializers.DateTimeField(required=False)
+    tax_amount = serializers.DecimalField(max_digits=12, decimal_places=2, default=0, required=False)
+    discount_amount = serializers.DecimalField(max_digits=12, decimal_places=2, default=0, required=False)
     payment_method = serializers.ChoiceField(choices=Sale.PAYMENT_METHOD_CHOICES)
     notes = serializers.CharField(required=False, allow_blank=True)
     
@@ -256,19 +256,17 @@ class CreateSaleSerializer(serializers.Serializer):
     )
     
     # Payment details
-    payment_amount = serializers.DecimalField(max_digits=12, decimal_places=2)
+    payment_amount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
     transaction_ref = serializers.CharField(max_length=100, required=False, allow_blank=True)
     
     def validate_items(self, value):
         """Validate sale items"""
         for item in value:
             # Check required fields
-            required_fields = ['medicine', 'quantity', 'unit_price', 'batch_number']
+            required_fields = ['medicine', 'quantity']
             for field in required_fields:
                 if field not in item:
-                    raise serializers.ValidationError(
-                        f"Each item must have {', '.join(required_fields)}"
-                    )
+                    raise serializers.ValidationError(f"Each item must have {', '.join(required_fields)}")
             
             # Validate medicine exists and has stock
             try:

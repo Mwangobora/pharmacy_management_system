@@ -6,6 +6,7 @@ from django.db.models import F, Sum, Count, Max
 from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
+from django.conf import settings
 
 from .models import Category, Medicine, StockTransaction
 from .serializers import (
@@ -244,6 +245,7 @@ class MedicineViewSet(viewsets.ModelViewSet):
         - Total stock value
         """
         stats = InventoryService.get_dashboard_stats(is_active_only=True)
+        stats['currency'] = getattr(settings, 'DEFAULT_CURRENCY_CODE', 'TZS')
         return Response(stats)
 
 

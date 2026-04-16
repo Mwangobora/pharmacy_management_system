@@ -210,6 +210,11 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Currency and pricing defaults
+DEFAULT_CURRENCY_CODE = 'TZS'
+DEFAULT_CURRENCY_NAME = 'Tanzanian Shilling'
+LOYALTY_TZS_PER_POINT = int(os.getenv('LOYALTY_TZS_PER_POINT', '1000'))
+
 # Celery Configuration
 CELERY_BROKER_URL = 'redis://redis:6379/0'
 CELERY_RESULT_BACKEND = 'redis://redis:6379/0'

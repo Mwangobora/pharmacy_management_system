@@ -64,7 +64,8 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 avg=Avg('net_amount')
             )['avg'] or 0),
             'last_purchase_date': customer.sales.order_by('-sale_date').first().sale_date
-                if customer.sales.exists() else None
+                if customer.sales.exists() else None,
+            'currency': getattr(settings, 'DEFAULT_CURRENCY_CODE', 'TZS')
         }
         
         return Response(summary)
@@ -203,6 +204,7 @@ class SaleViewSet(viewsets.ModelViewSet):
             date = timezone.now().date()
         
         summary = SalesService.daily_summary(date)
+        summary['currency'] = getattr(settings, 'DEFAULT_CURRENCY_CODE', 'TZS')
         return Response(summary)
     
     @action(detail=False, methods=['get'])

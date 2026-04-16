@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Sum, Count, F
 from django.utils import timezone
+from django.conf import settings
 
 from .models import Supplier, Purchase, PurchaseItem
 from .serializers import (
@@ -92,6 +93,7 @@ class SupplierViewSet(viewsets.ModelViewSet):
         """
         supplier = self.get_object()
         stats = SupplierService.get_supplier_stats(supplier)
+        stats['currency'] = getattr(settings, 'DEFAULT_CURRENCY_CODE', 'TZS')
         return Response(stats)
 
 
@@ -236,6 +238,7 @@ class PurchaseViewSet(viewsets.ModelViewSet):
     def dashboard_stats(self, request):
         queryset = self.get_queryset()
         stats = PurchaseService.get_purchase_dashboard_stats(queryset)
+        stats['currency'] = getattr(settings, 'DEFAULT_CURRENCY_CODE', 'TZS')
         return Response(stats)
 class PurchaseItemViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = PurchaseItem.objects.select_related('purchase', 'medicine').all()

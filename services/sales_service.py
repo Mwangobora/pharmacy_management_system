@@ -33,10 +33,10 @@ class SalesService:
         sale_date, customer (optional), payment_method, tax_amount, discount_amount, notes
         """
         items = data.get('items') or []
-        payment_amount = Decimal(data.get('payment_amount', 0))
         transaction_ref = data.get('transaction_ref', '')
 
         total_amount = Decimal('0')
+        tax_rate = Decimal(str(getattr(settings, 'SALES_TAX_PERCENT', '0')))
 
         with transaction.atomic():
             # Lock medicines and compute totals
@@ -50,7 +50,8 @@ class SalesService:
                 if medicine.stock_quantity < qty:
                     raise serializers.ValidationError(f"{medicine.name}: Insufficient stock (Available: {medicine.stock_quantity})")
 
-                unit_price = Decimal(item['unit_price'])
+                # Cashier flow: price is sourced from inventory policy.
+                unit_price = Decimal(medicine.selling_price)
                 discount_percent = Decimal(item.get('discount_percent', 0))
                 tax_percent = Decimal(item.get('tax_percent', 0))
 
@@ -61,9 +62,13 @@ class SalesService:
 
             invoice_number = SalesService.generate_invoice_number()
 
-            tax_amount = Decimal(data.get('tax_amount', 0))
+            computed_tax_amount = (total_amount * tax_rate / Decimal('100')).quantize(Decimal('0.01'))
+            tax_amount = computed_tax_amount
             discount_amount = Decimal(data.get('discount_amount', 0))
             net_amount = total_amount + tax_amount - discount_amount
+
+            payment_amount = data.get('payment_amount')
+            payment_amount = Decimal(payment_amount) if payment_amount is not None else net_amount
 
             # Determine payment status
             if payment_amount >= net_amount:
@@ -76,7 +81,7 @@ class SalesService:
             sale = Sale.objects.create(
                 customer=data.get('customer'),
                 invoice_number=invoice_number,
-                sale_date=data['sale_date'],
+                sale_date=data.get('sale_date') or timezone.now(),
                 total_amount=total_amount,
                 tax_amount=tax_amount,
                 discount_amount=discount_amount,
@@ -91,14 +96,15 @@ class SalesService:
             for item in items:
                 medicine = Medicine.objects.get(pk=item['medicine'])
                 qty = int(item['quantity'])
-                unit_price = Decimal(item['unit_price'])
+                unit_price = Decimal(medicine.selling_price)
                 discount_percent = Decimal(item.get('discount_percent', 0))
                 tax_percent = Decimal(item.get('tax_percent', 0))
+                batch_number = item.get('batch_number') or medicine.batch_number
 
                 SaleItem.objects.create(
                     sale=sale,
                     medicine=medicine,
-                    batch_number=item['batch_number'],
+                    batch_number=batch_number,
                     quantity=qty,
                     unit_price=unit_price,
                     discount_percent=discount_percent,

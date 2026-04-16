@@ -8,12 +8,13 @@ Handles business logic for:
 - Dashboard statistics
 """
 from decimal import Decimal
+from datetime import date
 from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
 from suppliers.models import Purchase, PurchaseItem
-from inventory.models import StockTransaction
+from inventory.models import StockTransaction, Medicine
 from rest_framework import serializers
 
 
@@ -86,13 +87,62 @@ class PurchaseService:
 
             # Create purchase items
             for item_data in items_data:
-                PurchaseItem.objects.create(
+                purchase_item = PurchaseItem.objects.create(
                     purchase=purchase,
                     medicine_id=item_data['medicine'],
                     quantity=item_data['quantity'],
                     unit_price=Decimal(item_data['unit_price']),
                     discount_percent=Decimal(item_data.get('discount_percent', 0)),
                     tax_percent=Decimal(item_data.get('tax_percent', 0))
+                )
+
+                # Treat procurement as the source of truth for stock and cost.
+                received_qty = int(item_data['quantity'])
+                purchase_item.received_quantity = received_qty
+                purchase_item.save(update_fields=['received_quantity'])
+
+                medicine = Medicine.objects.select_for_update().get(pk=item_data['medicine'])
+                old_stock = int(medicine.stock_quantity or 0)
+                old_cost = Decimal(medicine.purchase_price or 0)
+                new_cost = Decimal(item_data['unit_price'])
+
+                # Weighted average cost update.
+                total_old_value = old_cost * Decimal(old_stock)
+                total_new_value = new_cost * Decimal(received_qty)
+                combined_qty = old_stock + received_qty
+                weighted_cost = (total_old_value + total_new_value) / Decimal(combined_qty) if combined_qty > 0 else new_cost
+
+                medicine.purchase_price = weighted_cost.quantize(Decimal('0.01'))
+
+                # Keep selling price populated (manager can adjust later in inventory).
+                if not medicine.selling_price or medicine.selling_price <= Decimal('0'):
+                    medicine.selling_price = max(
+                        medicine.purchase_price + Decimal('0.01'),
+                        (medicine.purchase_price * Decimal('1.20')).quantize(Decimal('0.01'))
+                    )
+
+                # Optional batch/expiry provided by procurement flow updates medicine lot metadata.
+                batch_number = item_data.get('batch_number')
+                expiry_date = item_data.get('expiry_date')
+                manufacture_date = item_data.get('manufacture_date')
+
+                if batch_number:
+                    medicine.batch_number = batch_number
+                if expiry_date:
+                    medicine.expiry_date = date.fromisoformat(expiry_date) if isinstance(expiry_date, str) else expiry_date
+                if manufacture_date:
+                    medicine.manufacture_date = date.fromisoformat(manufacture_date) if isinstance(manufacture_date, str) else manufacture_date
+
+                medicine.save()
+
+                StockTransaction.objects.create(
+                    medicine=medicine,
+                    transaction_type='purchase',
+                    quantity=received_qty,
+                    reference_type='purchase',
+                    reference_id=purchase.id,
+                    notes=f'Received from purchase {purchase.invoice_number}',
+                    created_by=user
                 )
 
             return purchase
@@ -128,8 +178,14 @@ class PurchaseService:
                         f'Received quantity ({received_qty}) exceeds ordered quantity ({item.quantity})'
                     )
 
-                # Update received quantity
-                item.received_quantity = received_qty
+                outstanding_qty = item.quantity - item.received_quantity
+                if received_qty > outstanding_qty:
+                    raise serializers.ValidationError(
+                        f'Received quantity ({received_qty}) exceeds outstanding quantity ({outstanding_qty})'
+                    )
+
+                # Update received quantity cumulatively
+                item.received_quantity = item.received_quantity + received_qty
                 item.save()
 
                 # Create stock transaction (increases stock)

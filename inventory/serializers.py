@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from .models import Category, Medicine, StockTransaction
 from decimal import Decimal
+from django.utils import timezone
+from uuid import uuid4
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -72,6 +74,21 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
         model = Medicine
         fields = '__all__'
         read_only_fields = ['id', 'created_at', 'updated_at']
+        extra_kwargs = {
+            'generic_name': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'batch_number': {'required': False, 'allow_blank': True},
+            'manufacture_date': {'required': False},
+            'purchase_price': {'required': False},
+            'selling_price': {'required': False},
+            'stock_quantity': {'required': False},
+            'min_stock_level': {'required': False},
+            'max_stock_level': {'required': False},
+            'unit': {'required': False},
+            'storage_location': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'barcode': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'requires_prescription': {'required': False},
+            'is_active': {'required': False},
+        }
     
     def get_profit_per_unit(self, obj):
         """Calculate profit per unit"""
@@ -91,7 +108,6 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
     
     def validate_expiry_date(self, value):
         """Ensure expiry date is in the future"""
-        from django.utils import timezone
         if value < timezone.now().date():
             raise serializers.ValidationError("Cannot add expired medicine")
         return value
@@ -125,6 +141,37 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
                 })
         
         return data
+
+    def create(self, validated_data):
+        """
+        Keep medicine creation UX lightweight by filling non-essential fields
+        with backend defaults when omitted by the user.
+        """
+        if not validated_data.get('batch_number'):
+            validated_data['batch_number'] = f"AUTO-{timezone.now().strftime('%Y%m%d')}-{uuid4().hex[:6].upper()}"
+
+        if not validated_data.get('manufacture_date'):
+            validated_data['manufacture_date'] = timezone.now().date()
+
+        purchase_price = validated_data.get('purchase_price')
+        selling_price = validated_data.get('selling_price')
+
+        if purchase_price is None and selling_price is None:
+            validated_data['purchase_price'] = Decimal('0.01')
+            validated_data['selling_price'] = Decimal('0.02')
+        elif purchase_price is None and selling_price is not None:
+            validated_data['purchase_price'] = max(Decimal('0.01'), selling_price * Decimal('0.8'))
+        elif purchase_price is not None and selling_price is None:
+            validated_data['selling_price'] = max(purchase_price + Decimal('0.01'), purchase_price * Decimal('1.2'))
+
+        validated_data.setdefault('stock_quantity', 0)
+        validated_data.setdefault('min_stock_level', 10)
+        validated_data.setdefault('max_stock_level', 1000)
+        validated_data.setdefault('unit', 'pieces')
+        validated_data.setdefault('requires_prescription', False)
+        validated_data.setdefault('is_active', True)
+
+        return super().create(validated_data)
 
 
 class StockTransactionSerializer(serializers.ModelSerializer):
