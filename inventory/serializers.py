@@ -38,6 +38,13 @@ class MedicineListSerializer(serializers.ModelSerializer):
             'batch_number', 'expiry_date', 'purchase_price', 'selling_price', 'stock_quantity',
             'unit', 'stock_status', 'expiry_status', 'requires_prescription'
         ]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        request = self.context.get('request')
+        if request and request.user.is_authenticated and not request.user.has_permission('inventory.medicine.view_cost_price'):
+            fields.pop('purchase_price', None)
+        return fields
     
     def get_stock_status(self, obj):
         """Return stock status: low, ok, overstock"""
@@ -89,6 +96,15 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
             'requires_prescription': {'required': False},
             'is_active': {'required': False},
         }
+
+    def get_fields(self):
+        fields = super().get_fields()
+        request = self.context.get('request')
+        if request and request.user.is_authenticated and not request.user.has_permission('inventory.medicine.view_cost_price'):
+            fields.pop('purchase_price', None)
+            fields.pop('profit_per_unit', None)
+            fields.pop('markup_percentage', None)
+        return fields
     
     def get_profit_per_unit(self, obj):
         """Calculate profit per unit"""

@@ -19,10 +19,22 @@ from .serializers import (
 from inventory.models import StockTransaction, Medicine
 from django.conf import settings
 from services.sales_service import SalesService
+from users.permissions import HasViewPermissions, RBACPermissionMixin
 
-class CustomerViewSet(viewsets.ModelViewSet):
+class CustomerViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
     queryset = Customer.objects.all()
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasViewPermissions]
+    required_permissions = {
+        'list': ['customers.customer.view'],
+        'retrieve': ['customers.customer.view'],
+        'create': ['customers.customer.create'],
+        'update': ['customers.customer.update'],
+        'partial_update': ['customers.customer.update'],
+        'destroy': ['customers.customer.delete'],
+        'purchase_history': ['customers.customer.view'],
+        'loyalty_summary': ['customers.customer.view'],
+        'add_loyalty_points': ['customers.customer.update'],
+    }
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['gender']
     search_fields = ['first_name', 'last_name', 'phone', 'email']
@@ -91,11 +103,24 @@ class CustomerViewSet(viewsets.ModelViewSet):
         })
 
 
-class SaleViewSet(viewsets.ModelViewSet):
+class SaleViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
     queryset = Sale.objects.select_related(
         'customer', 'served_by'
     ).prefetch_related('items', 'payments').all()
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasViewPermissions]
+    required_permissions = {
+        'list': ['sales.sale.view'],
+        'retrieve': ['sales.sale.view'],
+        'create': ['sales.sale.create'],
+        'update': ['sales.sale.update'],
+        'partial_update': ['sales.sale.update'],
+        'destroy': ['sales.sale.delete'],
+        'create_with_items': ['sales.sale.create'],
+        'process_payment': ['sales.sale.process_payment'],
+        'refund': ['sales.sale.refund'],
+        'daily_summary': ['sales.sale.view_summary'],
+        'top_selling': ['sales.sale.view_summary'],
+    }
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['customer', 'payment_method', 'payment_status', 'served_by']
     search_fields = ['invoice_number', 'customer__first_name', 'customer__last_name']
@@ -216,10 +241,14 @@ class SaleViewSet(viewsets.ModelViewSet):
         return Response(top_medicines)
 
 
-class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
+class PaymentViewSet(RBACPermissionMixin, viewsets.ReadOnlyModelViewSet):
     queryset = Payment.objects.select_related('sale', 'received_by').all()
     serializer_class = PaymentSerializer
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasViewPermissions]
+    required_permissions = {
+        'list': ['sales.payment.view'],
+        'retrieve': ['sales.payment.view'],
+    }
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['sale', 'payment_method', 'received_by']
     ordering_fields = ['payment_date', 'amount']

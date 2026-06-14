@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status, filters, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Sum, Count, F
 from django.utils import timezone
@@ -15,9 +16,10 @@ from .serializers import (
 )
 from inventory.models import StockTransaction
 from services.supplier_service import SupplierService, PurchaseService
+from users.permissions import HasViewPermissions, RBACPermissionMixin
 
 
-class SupplierViewSet(viewsets.ModelViewSet):
+class SupplierViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
     """
     ViewSet for Supplier management
     
@@ -32,7 +34,18 @@ class SupplierViewSet(viewsets.ModelViewSet):
     """
     
     queryset = Supplier.objects.all()
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasViewPermissions]
+    required_permissions = {
+        'list': ['procurement.supplier.view'],
+        'retrieve': ['procurement.supplier.view'],
+        'create': ['procurement.supplier.create'],
+        'update': ['procurement.supplier.update'],
+        'partial_update': ['procurement.supplier.update'],
+        'destroy': ['procurement.supplier.delete'],
+        'purchases': ['procurement.purchase.view'],
+        'medicines': ['inventory.medicine.view'],
+        'statistics': ['procurement.supplier.view'],
+    }
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['is_active']
     search_fields = ['name', 'contact_person', 'phone', 'email', 'tax_id']
@@ -97,7 +110,7 @@ class SupplierViewSet(viewsets.ModelViewSet):
         return Response(stats)
 
 
-class PurchaseViewSet(viewsets.ModelViewSet):
+class PurchaseViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
     """
     ViewSet for Purchase management with advanced features
     
@@ -114,7 +127,20 @@ class PurchaseViewSet(viewsets.ModelViewSet):
     """
     
     queryset = Purchase.objects.select_related('supplier', 'created_by').prefetch_related('items').all()
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasViewPermissions]
+    required_permissions = {
+        'list': ['procurement.purchase.view'],
+        'retrieve': ['procurement.purchase.view'],
+        'create': ['procurement.purchase.create'],
+        'update': ['procurement.purchase.update'],
+        'partial_update': ['procurement.purchase.update'],
+        'destroy': ['procurement.purchase.delete'],
+        'create_with_items': ['procurement.purchase.create'],
+        'receive_items': ['procurement.purchase.receive_items'],
+        'update_payment_status': ['procurement.purchase.update'],
+        'pending_payments': ['procurement.purchase.view'],
+        'dashboard_stats': ['procurement.purchase.view'],
+    }
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['supplier', 'payment_status']
     search_fields = ['invoice_number', 'supplier__name']
@@ -240,9 +266,13 @@ class PurchaseViewSet(viewsets.ModelViewSet):
         stats = PurchaseService.get_purchase_dashboard_stats(queryset)
         stats['currency'] = getattr(settings, 'DEFAULT_CURRENCY_CODE', 'TZS')
         return Response(stats)
-class PurchaseItemViewSet(viewsets.ReadOnlyModelViewSet):
+class PurchaseItemViewSet(RBACPermissionMixin, viewsets.ReadOnlyModelViewSet):
     queryset = PurchaseItem.objects.select_related('purchase', 'medicine').all()
     serializer_class = PurchaseItemSerializer
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasViewPermissions]
+    required_permissions = {
+        'list': ['procurement.purchase.view'],
+        'retrieve': ['procurement.purchase.view'],
+    }
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['purchase', 'medicine']

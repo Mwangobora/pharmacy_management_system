@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status, filters, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import F, Sum, Count, Max
 from django.db import transaction
@@ -14,9 +15,10 @@ from .serializers import (
     StockTransactionSerializer, StockAdjustmentSerializer
 )
 from services.inventory_service import InventoryService
+from users.permissions import HasViewPermissions, RBACPermissionMixin
 
 
-class CategoryViewSet(viewsets.ModelViewSet):
+class CategoryViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
     """
     ViewSet for Category management
     
@@ -29,7 +31,17 @@ class CategoryViewSet(viewsets.ModelViewSet):
     
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasViewPermissions]
+    required_permissions = {
+        'list': ['inventory.category.view'],
+        'retrieve': ['inventory.category.view'],
+        'create': ['inventory.category.create'],
+        'update': ['inventory.category.update'],
+        'partial_update': ['inventory.category.update'],
+        'destroy': ['inventory.category.delete'],
+        'bulk': ['inventory.category.create'],
+        'medicines': ['inventory.medicine.view'],
+    }
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'code', 'description']
     ordering_fields = ['name', 'display_order', 'created_at']
@@ -87,7 +99,7 @@ class CategoryViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-class MedicineViewSet(viewsets.ModelViewSet):
+class MedicineViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
     """
     ViewSet for Medicine management with advanced filtering
     
@@ -104,7 +116,20 @@ class MedicineViewSet(viewsets.ModelViewSet):
     """
     
     queryset = Medicine.objects.select_related('category', 'supplier').all()
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasViewPermissions]
+    required_permissions = {
+        'list': ['inventory.medicine.view'],
+        'retrieve': ['inventory.medicine.view'],
+        'create': ['inventory.medicine.create'],
+        'update': ['inventory.medicine.update'],
+        'partial_update': ['inventory.medicine.update'],
+        'destroy': ['inventory.medicine.delete'],
+        'low_stock': ['inventory.medicine.view'],
+        'expiring_soon': ['inventory.medicine.view'],
+        'expired': ['inventory.medicine.view'],
+        'adjust_stock': ['inventory.medicine.adjust_stock'],
+        'dashboard_stats': ['inventory.medicine.view'],
+    }
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['category', 'supplier', 'requires_prescription', 'is_active']
     search_fields = ['name', 'generic_name', 'batch_number', 'barcode']
@@ -249,7 +274,7 @@ class MedicineViewSet(viewsets.ModelViewSet):
         return Response(stats)
 
 
-class StockTransactionViewSet(viewsets.ReadOnlyModelViewSet):
+class StockTransactionViewSet(RBACPermissionMixin, viewsets.ReadOnlyModelViewSet):
     """
     Read-only ViewSet for stock transaction history
     
@@ -259,6 +284,11 @@ class StockTransactionViewSet(viewsets.ReadOnlyModelViewSet):
     Note: Stock transactions are created automatically by the system
     or through medicine.adjust_stock() endpoint
     """
+    permission_classes = [IsAuthenticated, HasViewPermissions]
+    required_permissions = {
+        'list': ['inventory.stock_transaction.view'],
+        'retrieve': ['inventory.stock_transaction.view'],
+    }
     
     queryset = StockTransaction.objects.select_related(
         'medicine', 'created_by'
