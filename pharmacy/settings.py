@@ -53,10 +53,10 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt.token_blacklist',
     
     # Your apps
-    'users',
-    'inventory',
-    'suppliers',
-    'sales',
+    'apps.users',
+    'apps.inventory',
+    'apps.suppliers',
+    'apps.sales',
 ]
 
 AUTH_USER_MODEL = 'users.User'
@@ -118,9 +118,9 @@ DJOSER = {
     'LOGIN_FIELD': 'email',
     
     'SERIALIZERS': {
-        'user_create': 'users.serializers.UserCreateSerializer',
-        'user': 'users.serializers.UserSerializer',
-        'current_user': 'users.serializers.UserSerializer',
+        'user_create': 'apps.users.serializers.UserCreateSerializer',
+        'user': 'apps.users.serializers.UserSerializer',
+        'current_user': 'apps.users.serializers.UserSerializer',
         'user_delete': 'djoser.serializers.UserDeleteSerializer',
     },
     
@@ -225,7 +225,7 @@ CELERY_TIMEZONE = 'Africa/Dar_es_Salaam'
 
 CELERY_BEAT_SCHEDULE = {
     'notify-customer-every-minute': {
-        'task': 'suppliers.tasks.notify_customer',
+        'task': 'apps.suppliers.tasks.notify_customer',
         'schedule': 60.0,
         'args': ('This is a periodic notification to customers.',),
     },

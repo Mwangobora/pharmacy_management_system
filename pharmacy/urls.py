@@ -21,11 +21,11 @@ from django.urls import path, include
 from django.views.generic import RedirectView
 from rest_framework.routers import DefaultRouter
 from djoser.views import UserViewSet as DjoserUserViewSet
-from users.serializers import CustomTokenObtainPairSerializer
+from apps.users.serializers import CustomTokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
-from inventory.views import CategoryViewSet, MedicineViewSet, StockTransactionViewSet
-from suppliers.views import SupplierViewSet, PurchaseViewSet, PurchaseItemViewSet
-from sales.views import CustomerViewSet as SalesCustomerViewSet, SaleViewSet, PaymentViewSet
+from apps.inventory.views import CategoryViewSet, MedicineViewSet, StockTransactionViewSet
+from apps.suppliers.views import SupplierViewSet, PurchaseViewSet, PurchaseItemViewSet
+from apps.sales.views import CustomerViewSet as SalesCustomerViewSet, SaleViewSet, PaymentViewSet
 
 # Create a single root router
 router = DefaultRouter()
@@ -45,8 +45,8 @@ urlpatterns = [
     path('api/auth/register/', DjoserUserViewSet.as_view({'post': 'create'}), name='register'),
     path('api/auth/login/', TokenObtainPairView.as_view(serializer_class=CustomTokenObtainPairSerializer), name='login'),
     path('api/', include(router.urls)),
-    path('api/users/', include('users.urls')),
-    path('api/auth/', include('users.auth_urls')),
+    path('api/users/', include('apps.users.urls')),
+    path('api/auth/', include('apps.users.auth_urls')),
     # Authentication endpoints (Djoser + JWT)
     path('api/auth/', include('djoser.urls')),
     path('api/auth/', include('djoser.urls.jwt')),
