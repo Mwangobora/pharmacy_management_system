@@ -2,7 +2,7 @@
 
 ## Overview
 
-This backend powers a pharmacy management system built with Django and Django REST Framework. It exposes APIs for inventory, procurement, sales, customers, payments, and access control. The backend is the source of truth for authentication, authorization, business rules, and data validation.
+This backend is built with Django and Django REST Framework for a pharmacy management system. It handles authentication, authorization, inventory, suppliers, purchases, sales, customers, and payments.
 
 ## Main Stack
 
@@ -12,74 +12,68 @@ This backend powers a pharmacy management system built with Django and Django RE
 - Simple JWT
 - PostgreSQL
 - Docker / Docker Compose
-- Celery and Redis
+- Celery
+- Redis
 
 ## Project Structure
 
 - `pharmacy/`
-  Main Django project configuration, settings, and root URLs.
+  Django project configuration, settings, Celery bootstrap, and root URLs.
 
 - `apps/users/`
-  Custom user model, authentication, RBAC, roles, permissions, serializers, and user-management APIs.
+  Custom user model, authentication APIs, RBAC logic, roles, permissions, serializers, and access-control endpoints.
 
 - `apps/inventory/`
-  Category management, medicines, stock tracking, expiry checks, and stock adjustment flows.
+  Categories, medicines, stock transactions, stock adjustments, expiry tracking, and inventory summaries.
 
 - `apps/suppliers/`
-  Supplier records, purchases, receiving workflows, and procurement-related summaries.
+  Suppliers, purchases, receiving workflows, supplier summaries, and procurement-related operations.
 
 - `apps/sales/`
-  Customers, sales, payments, refunds, and sales summaries.
+  Customers, sales, sale items, payments, refunds, and sales summaries.
 
 - `apps/*/services.py`
-  Each business area now keeps its own transactional service logic inside the same app instead of using a shared top-level `services/` folder.
+  Business logic for multi-step transactional workflows is kept inside each app instead of a shared top-level services folder.
+
+- `docs/`
+  Internal backend documentation such as auth and module notes.
 
 ## Authentication
 
 The backend uses JWT authentication.
 
-Important auth endpoints:
+Important endpoints:
 
 - `POST /api/auth/register/`
 - `POST /api/auth/login/`
 - `POST /api/auth/jwt/refresh/`
 - `GET /api/auth/me/`
 
-The login response is intentionally small and the backend remains authoritative for access decisions. The frontend should rely on `/api/auth/me/` to get current roles and effective permissions.
+The backend remains the source of truth for roles and permissions. The frontend should use `/api/auth/me/` to load the current authenticated user profile and effective permissions.
 
 ## Authorization and RBAC
 
-The backend uses a dynamic RBAC approach centered in `apps/users/`.
+Authorization is implemented in `apps/users/`.
 
-Authorization model:
+Main RBAC pieces:
 
 - `User`
 - `Role`
-- `Role -> Permissions`
-- `Direct user permissions`
+- Django `Permission`
+- direct user permissions
+- role assignments
+- audit logs
 
-Effective permissions are calculated on the backend from:
+Important files:
 
-- active assigned roles
-- active direct permissions
-- Django permissions already attached to the user where applicable
+- [models.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/apps/users/models.py)
+- [permissions.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/apps/users/permissions.py)
+- [rbac.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/apps/users/rbac.py)
+- [permission_registry.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/apps/users/permission_registry.py)
 
-Key RBAC files:
+The backend computes effective permissions from active roles and direct permission assignments, then enforces them in the API layer.
 
-- [users/models.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/apps/users/models.py)
-- [users/permissions.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/apps/users/permissions.py)
-- [users/rbac.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/apps/users/rbac.py)
-- [users/permission_registry.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/apps/users/permission_registry.py)
-
-Important concepts:
-
-- permission registry for system permissions
-- default roles synced from backend definitions
-- per-view required permissions
-- backend-only enforcement of protected actions
-- audit log model for access-control changes
-
-## API Modules
+## Core API Areas
 
 ### Inventory
 
@@ -88,8 +82,9 @@ Handles:
 - categories
 - medicines
 - stock transactions
-- low stock and expiry monitoring
-- stock adjustment
+- low-stock checks
+- expiry checks
+- stock adjustments
 
 Examples:
 
@@ -99,15 +94,15 @@ Examples:
 - `/api/medicines/expiring_soon/`
 - `/api/stock-transactions/`
 
-### Procurement
+### Suppliers and Purchases
 
 Handles:
 
 - suppliers
 - purchases
 - purchase items
-- receiving items
-- procurement summaries
+- receiving purchased stock
+- supplier statistics
 
 Examples:
 
@@ -125,7 +120,7 @@ Handles:
 - sale items
 - payments
 - refunds
-- sales summaries
+- daily summaries
 
 Examples:
 
@@ -134,82 +129,36 @@ Examples:
 - `/api/sales/create_with_items/`
 - `/api/sales/{id}/process_payment/`
 - `/api/sales/{id}/refund/`
-- `/api/payments/`
 
-## Business Logic
+## Service Layer
 
-The backend does not try to keep all logic inside views. Multi-step flows are delegated to service classes such as inventory, purchase, and sales services. This keeps transactional logic reusable and easier to test.
+Views do not keep all business logic directly inside themselves. Transaction-heavy workflows are delegated to per-app service modules:
 
-Examples of backend-controlled rules:
+- [inventory services](/home/francis/Desktop/francis/PMS/pharmacy_management_system/apps/inventory/services.py)
+- [sales services](/home/francis/Desktop/francis/PMS/pharmacy_management_system/apps/sales/services.py)
+- [supplier services](/home/francis/Desktop/francis/PMS/pharmacy_management_system/apps/suppliers/services.py)
 
-- preventing sale of expired medicine
-- checking stock availability
-- calculating totals
-- creating payments and refunds
-- adjusting stock through controlled flows
-- permission-based field exposure
+This keeps viewsets thinner and makes business logic easier to reuse and test.
 
-## Sensitive Data Handling
+## Docker
 
-The backend should decide whether certain fields are returned at all.
+This backend is intended to run with Docker.
 
-Examples:
+Main files:
 
-- cost price
-- markup
-- profit-related values
-- restricted operational metadata
-
-This is safer than only hiding values in the frontend.
-
-## Docker-Based Development
-
-This backend is intended to run in Docker, not as a plain host-only Django process.
-
-Relevant files:
-
-- [docker-compose.yml](/home/francis/Desktop/francis/PMS/pharmacy_management_system/docker-compose.yml)
 - [Dockerfile](/home/francis/Desktop/francis/PMS/pharmacy_management_system/Dockerfile)
+- [docker-compose.yml](/home/francis/Desktop/francis/PMS/pharmacy_management_system/docker-compose.yml)
 
-Typical operations should be done through the container, for example:
+Typical run command:
 
-- migrations
-- management commands
-- RBAC sync
-- shell access
+```bash
+cd pharmacy_management_system
+docker compose up --build
+```
 
-## Data and Database
+## Notes
 
-The backend uses PostgreSQL and includes migrations for application models. User authentication uses a custom `User` model defined in `users/models.py`.
-
-Important backend data areas:
-
-- users and access control
-- medicines and stock levels
-- purchases and suppliers
-- sales and payments
-- audit-oriented access records
-
-## Recommended Backend Entry Points
-
-If you are exploring the backend, start here:
-
-- [pharmacy/settings.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/pharmacy/settings.py)
-- [pharmacy/urls.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/pharmacy/urls.py)
-- [users/models.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/users/models.py)
-- [users/views.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/users/views.py)
-- [inventory/views.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/inventory/views.py)
-- [suppliers/views.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/suppliers/views.py)
-- [sales/views.py](/home/francis/Desktop/francis/PMS/pharmacy_management_system/sales/views.py)
-
-## Current Direction
-
-The backend is moving toward:
-
-- stronger dynamic RBAC
-- cleaner permission enforcement
-- safer serializer-level field filtering
-- more reusable business services
-- cleaner Docker-based developer workflows
-
-This makes the backend better suited for a pharmacy environment where operational safety, access control, and data integrity matter.
+- The backend uses PostgreSQL in Docker by default.
+- Celery uses Redis as broker and result backend.
+- Module imports now resolve from `apps.*`.
+- If app paths are changed again, update `INSTALLED_APPS`, root URL imports, and any hardcoded dotted paths in settings.
