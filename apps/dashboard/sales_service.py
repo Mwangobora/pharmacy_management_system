@@ -12,6 +12,9 @@ from .query_utils import (
     apply_sale_filters,
     cost_visibility,
     determine_granularity,
+    integer_zero,
+    money_zero,
+    MONEY_FIELD,
     refund_transactions,
     refund_value_subquery,
     truncate_for_granularity,
@@ -34,42 +37,45 @@ class SalesDashboardService:
         payments = apply_payment_filters(Payment.objects.all(), filters)
         can_view_profit = cost_visibility(user)
 
-        revenue = sales.aggregate(value=Coalesce(Sum('net_amount'), 0))['value']
-        previous_revenue = previous_sales.aggregate(value=Coalesce(Sum('net_amount'), 0))['value']
+        revenue = sales.aggregate(value=Coalesce(Sum('net_amount'), money_zero()))['value']
+        previous_revenue = previous_sales.aggregate(value=Coalesce(Sum('net_amount'), money_zero()))['value']
         sales_count = sales.count()
-        items_sold = items.aggregate(value=Coalesce(Sum('quantity'), 0))['value']
-        discounts = sales.aggregate(value=Coalesce(Sum('discount_amount'), 0))['value']
+        items_sold = items.aggregate(value=Coalesce(Sum('quantity'), integer_zero()))['value']
+        discounts = sales.aggregate(value=Coalesce(Sum('discount_amount'), money_zero()))['value']
         refunds = refund_transactions(filters).annotate(
             estimated_value=refund_value_subquery()
         ).aggregate(
-            value=Coalesce(Sum('estimated_value'), 0),
+            value=Coalesce(Sum('estimated_value'), money_zero()),
             count=Count('id'),
         )
-        credit_sales = sales.filter(payment_method='credit').aggregate(value=Coalesce(Sum('net_amount'), 0))['value']
+        credit_sales = sales.filter(payment_method='credit').aggregate(value=Coalesce(Sum('net_amount'), money_zero()))['value']
         average_sale = (revenue / sales_count) if sales_count else 0
         previous_average = (previous_revenue / previous_sales.count()) if previous_sales.count() else 0
 
         trend = items.values(
             bucket=truncate_for_granularity('sale__sale_date', determine_granularity(filters))
         ).annotate(
-            revenue=Coalesce(Sum('subtotal'), 0),
-            quantity_sold=Coalesce(Sum('quantity'), 0),
-            average_sale=Coalesce(Sum('sale__net_amount'), 0) / Count('sale', distinct=True),
-            discount_value=Coalesce(Sum('sale__discount_amount'), 0),
+            revenue=Coalesce(Sum('subtotal'), money_zero()),
+            quantity_sold=Coalesce(Sum('quantity'), integer_zero()),
+            average_sale=ExpressionWrapper(
+                Coalesce(Sum('sale__net_amount'), money_zero()) / Count('sale', distinct=True),
+                output_field=MONEY_FIELD,
+            ),
+            discount_value=Coalesce(Sum('sale__discount_amount'), money_zero()),
         ).order_by('bucket')
 
         top_by_quantity = items.values(
             'medicine_id', 'medicine__name', 'medicine__generic_name'
         ).annotate(
-            quantity_sold=Coalesce(Sum('quantity'), 0),
-            revenue=Coalesce(Sum('subtotal'), 0),
+            quantity_sold=Coalesce(Sum('quantity'), integer_zero()),
+            revenue=Coalesce(Sum('subtotal'), money_zero()),
         ).order_by('-quantity_sold', '-revenue')[:10]
 
         top_by_revenue = items.values(
             'medicine_id', 'medicine__name', 'medicine__generic_name'
         ).annotate(
-            quantity_sold=Coalesce(Sum('quantity'), 0),
-            revenue=Coalesce(Sum('subtotal'), 0),
+            quantity_sold=Coalesce(Sum('quantity'), integer_zero()),
+            revenue=Coalesce(Sum('subtotal'), money_zero()),
         ).order_by('-revenue', '-quantity_sold')[:10]
 
         top_by_profit = []
@@ -80,8 +86,8 @@ class SalesDashboardService:
                 gross_profit=Coalesce(Sum(ExpressionWrapper(
                     F('subtotal') - (F('quantity') * F('medicine__purchase_price')),
                     output_field=DecimalField(max_digits=14, decimal_places=2),
-                )), 0),
-                revenue=Coalesce(Sum('subtotal'), 0),
+                )), money_zero()),
+                revenue=Coalesce(Sum('subtotal'), money_zero()),
             ).order_by('-gross_profit', '-revenue')[:10]
 
         slow_moving = Medicine.objects.filter(is_active=True).exclude(
@@ -95,22 +101,22 @@ class SalesDashboardService:
         ).filter(stock_quantity__gt=0).order_by('-stock_value', 'name')[:10]
 
         by_category = items.values('medicine__category__name').annotate(
-            revenue=Coalesce(Sum('subtotal'), 0),
-            quantity_sold=Coalesce(Sum('quantity'), 0),
+            revenue=Coalesce(Sum('subtotal'), money_zero()),
+            quantity_sold=Coalesce(Sum('quantity'), integer_zero()),
         ).order_by('-revenue')
 
         payment_methods = payments.values('payment_method').annotate(
             transactions=Count('id'),
-            revenue=Coalesce(Sum('amount'), 0),
+            revenue=Coalesce(Sum('amount'), money_zero()),
         ).order_by('-revenue')
 
         by_hour = sales.annotate(hour=ExtractHour('sale_date')).values('hour').annotate(
             sales=Count('id'),
-            revenue=Coalesce(Sum('net_amount'), 0),
+            revenue=Coalesce(Sum('net_amount'), money_zero()),
         ).order_by('hour')
         by_weekday = sales.annotate(weekday=ExtractWeekDay('sale_date')).values('weekday').annotate(
             sales=Count('id'),
-            revenue=Coalesce(Sum('net_amount'), 0),
+            revenue=Coalesce(Sum('net_amount'), money_zero()),
         ).order_by('weekday')
 
         return {
@@ -137,11 +143,31 @@ class SalesDashboardService:
                 'by_hour': [{'hour': item['hour'], 'sales': item['sales'], 'revenue': float(item['revenue'])} for item in by_hour],
                 'by_weekday': [{'weekday': item['weekday'], 'sales': item['sales'], 'revenue': float(item['revenue'])} for item in by_weekday],
             },
-            'top_by_quantity': list(top_by_quantity),
-            'top_by_revenue': list(top_by_revenue),
+            'top_by_quantity': [
+                {
+                    'medicine_id': str(item['medicine_id']),
+                    'name': item['medicine__name'],
+                    'generic_name': item['medicine__generic_name'],
+                    'quantity_sold': item['quantity_sold'],
+                    'revenue': float(item['revenue']),
+                }
+                for item in top_by_quantity
+            ],
+            'top_by_revenue': [
+                {
+                    'medicine_id': str(item['medicine_id']),
+                    'name': item['medicine__name'],
+                    'generic_name': item['medicine__generic_name'],
+                    'quantity_sold': item['quantity_sold'],
+                    'revenue': float(item['revenue']),
+                }
+                for item in top_by_revenue
+            ],
             'top_by_profit': [
                 {
-                    **item,
+                    'medicine_id': str(item['medicine_id']),
+                    'name': item['medicine__name'],
+                    'generic_name': item['medicine__generic_name'],
                     'gross_profit': float(item['gross_profit']),
                     'revenue': float(item['revenue']),
                 }

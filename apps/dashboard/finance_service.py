@@ -7,7 +7,7 @@ from apps.sales.models import Payment, Sale, SaleItem
 from apps.suppliers.models import Purchase
 
 from .comparison import build_metric_payload
-from .query_utils import apply_payment_filters, apply_purchase_filters, apply_sale_filters, cost_visibility, refund_transactions, refund_value_subquery, truncate_for_granularity, determine_granularity
+from .query_utils import apply_payment_filters, apply_purchase_filters, apply_sale_filters, cost_visibility, determine_granularity, money_zero, refund_transactions, refund_value_subquery, truncate_for_granularity
 
 
 class FinanceDashboardService:
@@ -19,24 +19,24 @@ class FinanceDashboardService:
         purchases = apply_purchase_filters(Purchase.objects.all(), filters)
         can_view_profit = cost_visibility(user)
 
-        revenue = sales.aggregate(value=Coalesce(Sum('net_amount'), 0))['value']
+        revenue = sales.aggregate(value=Coalesce(Sum('net_amount'), money_zero()))['value']
         cogs = items.aggregate(value=Coalesce(Sum(ExpressionWrapper(
             F('quantity') * F('medicine__purchase_price'),
             output_field=DecimalField(max_digits=14, decimal_places=2),
-        )), 0))['value'] if can_view_profit else None
+        )), money_zero()))['value'] if can_view_profit else None
         gross_profit = (revenue - cogs) if can_view_profit else None
         margin = ((gross_profit / revenue) * 100) if can_view_profit and revenue else None
         refund_value = refund_transactions(filters).annotate(
             estimated_value=refund_value_subquery()
-        ).aggregate(value=Coalesce(Sum('estimated_value'), 0))['value']
-        outstanding_credit = sales.filter(payment_status__in=['pending', 'partial']).aggregate(value=Coalesce(Sum('net_amount'), 0))['value']
-        supplier_balances = purchases.filter(payment_status__in=['pending', 'partial']).aggregate(value=Coalesce(Sum('net_amount'), 0))['value']
-        inflows = payments.values('payment_method').annotate(amount=Coalesce(Sum('amount'), 0)).order_by('-amount')
+        ).aggregate(value=Coalesce(Sum('estimated_value'), money_zero()))['value']
+        outstanding_credit = sales.filter(payment_status__in=['pending', 'partial']).aggregate(value=Coalesce(Sum('net_amount'), money_zero()))['value']
+        supplier_balances = purchases.filter(payment_status__in=['pending', 'partial']).aggregate(value=Coalesce(Sum('net_amount'), money_zero()))['value']
+        inflows = payments.values('payment_method').annotate(amount=Coalesce(Sum('amount'), money_zero())).order_by('-amount')
         trend = sales.values(
             bucket=truncate_for_granularity('sale_date', determine_granularity(filters))
         ).annotate(
-            revenue=Coalesce(Sum('net_amount'), 0),
-            refund_value=Coalesce(Sum('discount_amount'), 0),
+            revenue=Coalesce(Sum('net_amount'), money_zero()),
+            refund_value=Coalesce(Sum('discount_amount'), money_zero()),
         ).order_by('bucket')
 
         return {

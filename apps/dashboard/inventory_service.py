@@ -9,7 +9,7 @@ from django.utils import timezone
 from apps.inventory.models import Medicine, StockTransaction
 
 from .comparison import build_metric_payload
-from .query_utils import apply_stock_filters, cost_visibility, determine_granularity, truncate_for_granularity
+from .query_utils import apply_stock_filters, cost_visibility, determine_granularity, integer_zero, money_zero, truncate_for_granularity
 
 
 class InventoryDashboardService:
@@ -21,11 +21,11 @@ class InventoryDashboardService:
         cost_stock = medicines.aggregate(value=Coalesce(Sum(ExpressionWrapper(
             F('stock_quantity') * F('purchase_price'),
             output_field=DecimalField(max_digits=14, decimal_places=2),
-        )), 0))['value'] if can_view_costs else None
+        )), money_zero()))['value'] if can_view_costs else None
         retail_stock = medicines.aggregate(value=Coalesce(Sum(ExpressionWrapper(
             F('stock_quantity') * F('selling_price'),
             output_field=DecimalField(max_digits=14, decimal_places=2),
-        )), 0))['value']
+        )), money_zero()))['value']
         expiry_30 = medicines.filter(stock_quantity__gt=0, expiry_date__gte=today, expiry_date__lte=today + timedelta(days=30))
         expired = medicines.filter(stock_quantity__gt=0, expiry_date__lt=today)
         low_stock = medicines.filter(stock_quantity__gt=0, stock_quantity__lte=F('min_stock_level'))
@@ -43,7 +43,7 @@ class InventoryDashboardService:
             'bucket',
             'transaction_type',
         ).annotate(
-            quantity=Coalesce(Sum('quantity'), 0),
+            quantity=Coalesce(Sum('quantity'), integer_zero()),
         ).order_by('bucket', 'transaction_type')
 
         slow_moving = medicines.exclude(

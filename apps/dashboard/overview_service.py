@@ -13,6 +13,8 @@ from .query_utils import (
     apply_sale_filters,
     cost_visibility,
     determine_granularity,
+    integer_zero,
+    money_zero,
     refund_transactions,
     refund_value_subquery,
     truncate_for_granularity,
@@ -43,33 +45,33 @@ class OverviewDashboardService:
                 value=Coalesce(Sum(ExpressionWrapper(
                     F('subtotal') - (F('quantity') * F('medicine__purchase_price')),
                     output_field=DecimalField(max_digits=14, decimal_places=2),
-                )), 0)
+                )), money_zero())
             )['value']
             previous_gross_profit = previous_item_queryset.aggregate(
                 value=Coalesce(Sum(ExpressionWrapper(
                     F('subtotal') - (F('quantity') * F('medicine__purchase_price')),
                     output_field=DecimalField(max_digits=14, decimal_places=2),
-                )), 0)
+                )), money_zero())
             )['value']
 
-        revenue = sales.aggregate(value=Coalesce(Sum('net_amount'), 0))['value']
-        previous_revenue = previous_sales.aggregate(value=Coalesce(Sum('net_amount'), 0))['value']
+        revenue = sales.aggregate(value=Coalesce(Sum('net_amount'), money_zero()))['value']
+        previous_revenue = previous_sales.aggregate(value=Coalesce(Sum('net_amount'), money_zero()))['value']
         sales_count = sales.count()
         previous_count = previous_sales.count()
-        avg_sale = sales.aggregate(value=Coalesce(Sum('net_amount'), 0))['value'] / sales_count if sales_count else 0
+        avg_sale = revenue / sales_count if sales_count else 0
         previous_avg = previous_revenue / previous_count if previous_count else 0
         stock_value = Medicine.objects.filter(is_active=True).aggregate(
             value=Coalesce(Sum(ExpressionWrapper(
                 F('stock_quantity') * F('purchase_price'),
                 output_field=DecimalField(max_digits=14, decimal_places=2),
-            )), 0)
+            )), money_zero())
         )['value'] if can_view_costs else None
 
         low_stock_count = Medicine.objects.filter(is_active=True, stock_quantity__lte=F('min_stock_level')).count()
         refund_events = refund_transactions(filters)
         refund_estimate = refund_events.annotate(
             estimated_value=refund_value_subquery()
-        ).aggregate(value=Coalesce(Sum('estimated_value'), 0))['value']
+        ).aggregate(value=Coalesce(Sum('estimated_value'), money_zero()))['value']
         due_amount = 0
         for sale in sales.filter(payment_status__in=['pending', 'partial']).prefetch_related('payments'):
             paid = sum(payment.amount for payment in sale.payments.all())
@@ -96,10 +98,10 @@ class OverviewDashboardService:
         trend = sale_item_queryset.values(
             bucket=truncate_for_granularity('sale__sale_date', granularity)
         ).annotate(
-            revenue=Coalesce(Sum('subtotal'), 0),
+            revenue=Coalesce(Sum('subtotal'), money_zero()),
             sales=Count('sale', distinct=True),
-            gross_profit=Coalesce(Sum(gross_profit_expression), 0)
-            if can_view_costs else Coalesce(Sum('subtotal'), 0),
+            gross_profit=Coalesce(Sum(gross_profit_expression), money_zero())
+            if can_view_costs else Coalesce(Sum('subtotal'), money_zero()),
         ).order_by('bucket')
 
         alerts = [
@@ -138,15 +140,15 @@ class OverviewDashboardService:
             'medicine__name',
             'medicine__generic_name',
         ).annotate(
-            quantity_sold=Coalesce(Sum('quantity'), 0),
-            revenue=Coalesce(Sum('subtotal'), 0),
-            gross_profit=Coalesce(Sum(gross_profit_expression), 0)
-            if can_view_costs else Coalesce(Sum('subtotal'), 0),
+            quantity_sold=Coalesce(Sum('quantity'), integer_zero()),
+            revenue=Coalesce(Sum('subtotal'), money_zero()),
+            gross_profit=Coalesce(Sum(gross_profit_expression), money_zero())
+            if can_view_costs else Coalesce(Sum('subtotal'), money_zero()),
         ).order_by('-quantity_sold', '-revenue')[:5]
 
         recent_sales = sales.order_by('-sale_date')[:8]
         payment_breakdown = payments.values('payment_method').annotate(
-            revenue=Coalesce(Sum('amount'), 0),
+            revenue=Coalesce(Sum('amount'), money_zero()),
             transactions=Count('id'),
         ).order_by('-revenue')
 

@@ -5,7 +5,7 @@ from django.db.models.functions import Coalesce
 
 from apps.sales.models import Sale, SaleItem
 
-from .query_utils import apply_sale_filters, cost_visibility
+from .query_utils import apply_sale_filters, cost_visibility, integer_zero, money_zero
 
 
 class PerformanceDashboardService:
@@ -20,7 +20,7 @@ class PerformanceDashboardService:
             'served_by_id',
             'served_by__username',
         ).annotate(
-            revenue=Coalesce(Sum('net_amount'), 0),
+            revenue=Coalesce(Sum('net_amount'), money_zero()),
             sales_count=Count('id'),
         ).order_by('-revenue', '-sales_count')
 
@@ -34,17 +34,17 @@ class PerformanceDashboardService:
             output_field=DecimalField(max_digits=14, decimal_places=2),
         )
         category_performance = items.values('medicine__category__name').annotate(
-            revenue=Coalesce(Sum('subtotal'), 0),
-            quantity_sold=Coalesce(Sum('quantity'), 0),
-            gross_profit=Coalesce(Sum(gross_profit_expression), 0)
-            if can_view_profit else Coalesce(Sum('subtotal'), 0),
+            revenue=Coalesce(Sum('subtotal'), money_zero()),
+            quantity_sold=Coalesce(Sum('quantity'), integer_zero()),
+            gross_profit=Coalesce(Sum(gross_profit_expression), money_zero())
+            if can_view_profit else Coalesce(Sum('subtotal'), money_zero()),
         ).order_by('-revenue')
 
         return {
             'staff_visible': can_view_staff,
             'cashier_performance': [
                 {
-                    'staff_id': item['served_by_id'],
+                    'staff_id': str(item['served_by_id']),
                     'name': item['served_by__username'],
                     'revenue': float(item['revenue']),
                     'sales_count': item['sales_count'],
@@ -64,7 +64,7 @@ class PerformanceDashboardService:
             'growth_indicators': {
                 'identified_customers': customer_growth,
                 'repeat_customer_rate': (repeat_customer_count / customer_growth) * 100 if customer_growth else None,
-                'average_basket_value': float(sales.aggregate(value=Coalesce(Sum('net_amount'), 0))['value']) / sales.count() if sales.count() else 0,
+                'average_basket_value': float(sales.aggregate(value=Coalesce(Sum('net_amount'), money_zero()))['value']) / sales.count() if sales.count() else 0,
                 'sales_volume': sales.count(),
             },
         }

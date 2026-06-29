@@ -2,11 +2,23 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from django.db.models import DecimalField, Exists, ExpressionWrapper, F, OuterRef, Subquery, Sum, Value
-from django.db.models.functions import Coalesce, TruncDate, TruncHour, TruncMonth, TruncWeek
+from django.db.models import DecimalField, Exists, ExpressionWrapper, F, IntegerField, OuterRef, Subquery, Sum, UUIDField, Value
+from django.db.models.functions import Cast, Coalesce, TruncDate, TruncHour, TruncMonth, TruncWeek
 
 from apps.inventory.models import Medicine, StockTransaction
 from apps.sales.models import SaleItem
+
+
+MONEY_FIELD = DecimalField(max_digits=14, decimal_places=2)
+AVERAGE_FIELD = DecimalField(max_digits=12, decimal_places=2)
+
+
+def money_zero():
+    return Value(0, output_field=MONEY_FIELD)
+
+
+def integer_zero():
+    return Value(0, output_field=IntegerField())
 
 
 def apply_sale_filters(queryset, filters):
@@ -74,27 +86,27 @@ def truncate_for_granularity(field_name, granularity):
 def sale_item_cost_expression():
     return ExpressionWrapper(
         F('quantity') * F('medicine__purchase_price'),
-        output_field=DecimalField(max_digits=14, decimal_places=2),
+        output_field=MONEY_FIELD,
     )
 
 
 def refund_value_subquery():
     sale_item_total = SaleItem.objects.filter(
-        sale_id=OuterRef('reference_id'),
+        sale_id=Cast(OuterRef('reference_id'), output_field=UUIDField()),
         medicine_id=OuterRef('medicine_id'),
     ).values('medicine_id').annotate(
-        total_quantity=Coalesce(Sum('quantity'), 0),
-        total_subtotal=Coalesce(Sum('subtotal'), Value(0)),
+        total_quantity=Coalesce(Sum('quantity'), integer_zero()),
+        total_subtotal=Coalesce(Sum('subtotal'), money_zero()),
     ).annotate(
         average_unit_price=ExpressionWrapper(
             F('total_subtotal') / F('total_quantity'),
-            output_field=DecimalField(max_digits=12, decimal_places=2),
+            output_field=AVERAGE_FIELD,
         )
     ).values('average_unit_price')[:1]
 
     return ExpressionWrapper(
-        F('quantity') * Coalesce(Subquery(sale_item_total), Value(0)),
-        output_field=DecimalField(max_digits=14, decimal_places=2),
+        F('quantity') * Coalesce(Subquery(sale_item_total), money_zero()),
+        output_field=MONEY_FIELD,
     )
 
 
@@ -118,7 +130,7 @@ def slow_moving_medicines(filters, *, limit=10):
         sold_in_period=Exists(sales_in_range),
         stock_value=ExpressionWrapper(
             F('stock_quantity') * F('purchase_price'),
-            output_field=DecimalField(max_digits=14, decimal_places=2),
+            output_field=MONEY_FIELD,
         ),
     ).filter(
         stock_quantity__gt=0,
