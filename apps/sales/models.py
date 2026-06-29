@@ -142,6 +142,15 @@ class SaleItem(BaseModel):
         on_delete=models.PROTECT,
         related_name='sale_items'
     )
+    unit_conversion = models.ForeignKey(
+        'inventory.MedicineUnitConversion',
+        on_delete=models.PROTECT,
+        related_name='sale_items',
+        null=True,
+        blank=True,
+    )
+    sold_unit_name = models.CharField(max_length=30, blank=True, null=True)
+    sold_quantity_in_unit = models.PositiveIntegerField(null=True, blank=True)
     batch_number = models.CharField(max_length=50)
     
     quantity = models.IntegerField(validators=[MinValueValidator(1)])
@@ -167,6 +176,27 @@ class SaleItem(BaseModel):
         decimal_places=2,
         validators=[MinValueValidator(Decimal('0.00'))]
     )
+    selling_price_snapshot = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))],
+        null=True,
+        blank=True,
+    )
+    cost_price_snapshot = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))],
+        null=True,
+        blank=True,
+    )
+    profit_snapshot = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    refunded_quantity = models.PositiveIntegerField(default=0)
     
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -186,12 +216,77 @@ class SaleItem(BaseModel):
     def save(self, *args, **kwargs):
         """Auto-calculate subtotal on save"""
         # Calculate subtotal: (quantity × unit_price) - discount + tax
+        if self.selling_price_snapshot is None:
+            self.selling_price_snapshot = self.unit_price
+        if not self.sold_unit_name and self.unit_conversion_id:
+            self.sold_unit_name = self.unit_conversion.unit_name
+        if self.sold_quantity_in_unit is None:
+            self.sold_quantity_in_unit = self.quantity
         base_amount = self.quantity * self.unit_price
         discount = base_amount * (self.discount_percent / 100)
         tax = (base_amount - discount) * (self.tax_percent / 100)
         self.subtotal = base_amount - discount + tax
+        if self.cost_price_snapshot is not None:
+            self.profit_snapshot = (
+                (self.unit_price - self.cost_price_snapshot) * self.quantity
+            ).quantize(Decimal('0.01'))
         
         super().save(*args, **kwargs)
+
+
+class SaleItemBatchAllocation(BaseModel):
+    """Links one sale item to one or more stock batches."""
+
+    sale_item = models.ForeignKey(
+        SaleItem,
+        on_delete=models.CASCADE,
+        related_name='batch_allocations',
+    )
+    batch = models.ForeignKey(
+        'inventory.MedicineBatch',
+        on_delete=models.PROTECT,
+        related_name='sale_allocations',
+    )
+    quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    cost_price_snapshot = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    selling_price_snapshot = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))],
+    )
+    total_cost_snapshot = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    total_revenue_snapshot = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    returned_quantity = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'sale_item_batch_allocations'
+        ordering = ['created_at', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['sale_item', 'batch'],
+                name='uniq_sale_item_batch_allocation',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['sale_item']),
+            models.Index(fields=['batch']),
+        ]
+
+    def __str__(self):
+        return f"{self.sale_item_id} -> {self.batch.batch_number}"
 
 
 class Payment(BaseModel):

@@ -7,7 +7,7 @@ from apps.sales.models import Payment, Sale, SaleItem
 from apps.suppliers.models import Purchase
 
 from .comparison import build_metric_payload
-from .query_utils import apply_payment_filters, apply_purchase_filters, apply_sale_filters, cost_visibility, determine_granularity, money_zero, refund_transactions, refund_value_subquery, truncate_for_granularity
+from .query_utils import apply_payment_filters, apply_purchase_filters, apply_sale_filters, cost_visibility, determine_granularity, money_zero, refund_transactions, refund_value_subquery, sale_item_cost_expression, truncate_for_granularity
 
 
 class FinanceDashboardService:
@@ -21,7 +21,7 @@ class FinanceDashboardService:
 
         revenue = sales.aggregate(value=Coalesce(Sum('net_amount'), money_zero()))['value']
         cogs = items.aggregate(value=Coalesce(Sum(ExpressionWrapper(
-            F('quantity') * F('medicine__purchase_price'),
+            sale_item_cost_expression(),
             output_field=DecimalField(max_digits=14, decimal_places=2),
         )), money_zero()))['value'] if can_view_profit else None
         gross_profit = (revenue - cogs) if can_view_profit else None

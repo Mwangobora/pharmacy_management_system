@@ -17,6 +17,7 @@ from .query_utils import (
     MONEY_FIELD,
     refund_transactions,
     refund_value_subquery,
+    sale_item_cost_expression,
     truncate_for_granularity,
 )
 
@@ -84,7 +85,7 @@ class SalesDashboardService:
                 'medicine_id', 'medicine__name', 'medicine__generic_name'
             ).annotate(
                 gross_profit=Coalesce(Sum(ExpressionWrapper(
-                    F('subtotal') - (F('quantity') * F('medicine__purchase_price')),
+                    F('subtotal') - sale_item_cost_expression(),
                     output_field=DecimalField(max_digits=14, decimal_places=2),
                 )), money_zero()),
                 revenue=Coalesce(Sum('subtotal'), money_zero()),

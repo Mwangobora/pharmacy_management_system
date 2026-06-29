@@ -115,7 +115,10 @@ class MedicineViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
     - POST /medicines/{id}/adjust_stock/ - Manual stock adjustment
     """
     
-    queryset = Medicine.objects.select_related('category', 'supplier').all()
+    queryset = Medicine.objects.select_related('category', 'supplier').prefetch_related(
+        'batches',
+        'unit_conversions',
+    ).all()
     permission_classes = [IsAuthenticated, HasViewPermissions]
     required_permissions = {
         'list': ['inventory.medicine.view'],

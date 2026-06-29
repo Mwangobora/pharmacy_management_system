@@ -118,6 +118,23 @@ class PurchaseItem(BaseModel):
         on_delete=models.PROTECT,
         related_name='purchase_items'
     )
+    batch = models.ForeignKey(
+        'inventory.MedicineBatch',
+        on_delete=models.PROTECT,
+        related_name='purchase_items',
+        null=True,
+        blank=True,
+    )
+    unit_conversion = models.ForeignKey(
+        'inventory.MedicineUnitConversion',
+        on_delete=models.PROTECT,
+        related_name='purchase_items',
+        null=True,
+        blank=True,
+    )
+    unit_name = models.CharField(max_length=30, blank=True, null=True)
+    quantity_base_units = models.PositiveIntegerField(default=0)
+    quantity_in_unit = models.PositiveIntegerField(null=True, blank=True)
     
     quantity = models.IntegerField(validators=[MinValueValidator(1)])
     unit_price = models.DecimalField(
@@ -143,6 +160,13 @@ class PurchaseItem(BaseModel):
         validators=[MinValueValidator(Decimal('0.00'))]
     )
     received_quantity = models.IntegerField(default=0)
+    cost_price_snapshot = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))],
+        null=True,
+        blank=True,
+    )
     
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -162,6 +186,14 @@ class PurchaseItem(BaseModel):
     def save(self, *args, **kwargs):
         """Auto-calculate subtotal on save"""
         # Calculate subtotal: (quantity × unit_price) - discount + tax
+        if not self.quantity_base_units:
+            self.quantity_base_units = self.quantity
+        if not self.quantity_in_unit:
+            self.quantity_in_unit = self.quantity
+        if not self.unit_name and self.unit_conversion_id:
+            self.unit_name = self.unit_conversion.unit_name
+        if self.cost_price_snapshot is None:
+            self.cost_price_snapshot = self.unit_price
         base_amount = self.quantity * self.unit_price
         discount = base_amount * (self.discount_percent / 100)
         tax = (base_amount - discount) * (self.tax_percent / 100)

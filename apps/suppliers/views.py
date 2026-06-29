@@ -126,7 +126,7 @@ class PurchaseViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
     - GET /purchases/pending-payments/ - Get purchases with pending payments
     """
     
-    queryset = Purchase.objects.select_related('supplier', 'created_by').prefetch_related('items').all()
+    queryset = Purchase.objects.select_related('supplier', 'created_by').prefetch_related('items__batch').all()
     permission_classes = [IsAuthenticated, HasViewPermissions]
     required_permissions = {
         'list': ['procurement.purchase.view'],

@@ -1,8 +1,14 @@
 from rest_framework import serializers
-from .models import Category, Medicine, StockTransaction
+from django.db import transaction
+from .models import (
+    Category,
+    Medicine,
+    MedicineBatch,
+    MedicineUnitConversion,
+    StockTransaction,
+)
 from decimal import Decimal
 from django.utils import timezone
-from uuid import uuid4
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -30,13 +36,20 @@ class MedicineListSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source='supplier.name', read_only=True)
     stock_status = serializers.SerializerMethodField()
     expiry_status = serializers.SerializerMethodField()
+    days_to_expiry = serializers.SerializerMethodField()
+    batches = serializers.SerializerMethodField()
+    unit_conversions = serializers.SerializerMethodField()
+    unit_review_required = serializers.BooleanField(read_only=True)
     
     class Meta:
         model = Medicine
         fields = [
-            'id', 'name', 'generic_name', 'category_name', 'supplier_name',
+            'id', 'name', 'generic_name', 'category', 'category_name', 'supplier', 'supplier_name',
+            'manufacture_date',
             'batch_number', 'expiry_date', 'purchase_price', 'selling_price', 'stock_quantity',
-            'unit', 'stock_status', 'expiry_status', 'requires_prescription'
+            'min_stock_level', 'max_stock_level', 'unit', 'base_unit', 'storage_location',
+            'barcode', 'requires_prescription', 'is_active', 'created_at', 'updated_at',
+            'unit_review_required', 'stock_status', 'expiry_status', 'days_to_expiry', 'batches', 'unit_conversions',
         ]
 
     def get_fields(self):
@@ -56,16 +69,34 @@ class MedicineListSerializer(serializers.ModelSerializer):
     
     def get_expiry_status(self, obj):
         """Return expiry status: expired, expiring_soon, ok"""
-        from django.utils import timezone
         from datetime import timedelta
         
         today = timezone.now().date()
         
+        if not obj.expiry_date:
+            return 'unknown'
         if obj.expiry_date < today:
             return 'expired'
         elif obj.expiry_date <= today + timedelta(days=30):
             return 'expiring_soon'
         return 'ok'
+
+    def get_days_to_expiry(self, obj):
+        if not obj.expiry_date:
+            return None
+        return (obj.expiry_date - timezone.now().date()).days
+
+    def get_batches(self, obj):
+        return MedicineBatchSerializer(
+            obj.batches.order_by('expiry_date', 'received_at'),
+            many=True,
+        ).data
+
+    def get_unit_conversions(self, obj):
+        return MedicineUnitConversionSerializer(
+            obj.unit_conversions.order_by('sort_order', 'unit_name'),
+            many=True,
+        ).data
 
 
 class MedicineDetailSerializer(serializers.ModelSerializer):
@@ -76,6 +107,23 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
     profit_per_unit = serializers.SerializerMethodField()
     markup_percentage = serializers.SerializerMethodField()
     days_to_expiry = serializers.SerializerMethodField()
+    batches = serializers.SerializerMethodField()
+    unit_conversions = serializers.SerializerMethodField()
+    dosage_form = serializers.ChoiceField(
+        choices=[
+            ('tablet', 'Tablet'),
+            ('capsule', 'Capsule'),
+            ('syrup', 'Syrup'),
+            ('suspension', 'Suspension'),
+            ('injection', 'Injection'),
+            ('ampoule', 'Ampoule'),
+            ('cream', 'Cream'),
+            ('ointment', 'Ointment'),
+            ('sachet_powder', 'Sachet Powder'),
+        ],
+        required=False,
+        write_only=True,
+    )
     
     class Meta:
         model = Medicine
@@ -83,18 +131,21 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
         extra_kwargs = {
             'generic_name': {'required': False, 'allow_blank': True, 'allow_null': True},
-            'batch_number': {'required': False, 'allow_blank': True},
-            'manufacture_date': {'required': False},
-            'purchase_price': {'required': False},
-            'selling_price': {'required': False},
-            'stock_quantity': {'required': False},
+            'batch_number': {'read_only': True},
+            'manufacture_date': {'read_only': True},
+            'expiry_date': {'read_only': True},
+            'purchase_price': {'read_only': True},
+            'selling_price': {'required': True},
+            'stock_quantity': {'read_only': True},
             'min_stock_level': {'required': False},
             'max_stock_level': {'required': False},
-            'unit': {'required': False},
+            'unit': {'read_only': True},
+            'base_unit': {'required': True},
             'storage_location': {'required': False, 'allow_blank': True, 'allow_null': True},
             'barcode': {'required': False, 'allow_blank': True, 'allow_null': True},
             'requires_prescription': {'required': False},
             'is_active': {'required': False},
+            'unit_review_required': {'read_only': True},
         }
 
     def get_fields(self):
@@ -104,29 +155,42 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
             fields.pop('purchase_price', None)
             fields.pop('profit_per_unit', None)
             fields.pop('markup_percentage', None)
+        fields['unit_conversions'] = MedicineUnitConversionSerializer(
+            many=True,
+            required=False,
+        )
         return fields
     
     def get_profit_per_unit(self, obj):
         """Calculate profit per unit"""
+        if obj.selling_price is None or obj.purchase_price is None:
+            return None
         return float(obj.selling_price - obj.purchase_price)
     
     def get_markup_percentage(self, obj):
         """Calculate markup percentage"""
-        if obj.purchase_price > 0:
+        if obj.purchase_price and obj.purchase_price > 0 and obj.selling_price is not None:
             return float(((obj.selling_price - obj.purchase_price) / obj.purchase_price) * 100)
         return 0
     
     def get_days_to_expiry(self, obj):
         """Calculate days until expiry"""
-        from django.utils import timezone
+        if not obj.expiry_date:
+            return None
         delta = obj.expiry_date - timezone.now().date()
         return delta.days
-    
-    def validate_expiry_date(self, value):
-        """Ensure expiry date is in the future"""
-        if value < timezone.now().date():
-            raise serializers.ValidationError("Cannot add expired medicine")
-        return value
+
+    def get_batches(self, obj):
+        return MedicineBatchSerializer(
+            obj.batches.order_by('expiry_date', 'received_at'),
+            many=True,
+        ).data
+
+    def get_unit_conversions(self, obj):
+        return MedicineUnitConversionSerializer(
+            obj.unit_conversions.order_by('sort_order', 'unit_name'),
+            many=True,
+        ).data
     
     def validate(self, data):
         """Cross-field validation"""
@@ -136,58 +200,95 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
         if data.get('storage_location') == '':
             data['storage_location'] = None
 
-        # Ensure selling price > purchase price
-        purchase_price = data.get('purchase_price')
-        selling_price = data.get('selling_price')
-        
-        if purchase_price and selling_price:
-            if selling_price <= purchase_price:
+        if self.instance is None and not data.get('base_unit'):
+            raise serializers.ValidationError({
+                'base_unit': 'Base unit is required when creating a medicine.'
+            })
+
+        if self.instance is None:
+            forbidden_create_fields = ['batch_number', 'manufacture_date', 'expiry_date', 'purchase_price', 'stock_quantity']
+            forbidden_supplied = [
+                field_name for field_name in forbidden_create_fields
+                if self.initial_data.get(field_name) not in (None, '', [])
+            ]
+            if forbidden_supplied:
                 raise serializers.ValidationError({
-                    'selling_price': 'Selling price must be greater than purchase price'
+                    field_name: 'Enter batch, expiry, manufacture, cost, and stock during purchase receiving, not medicine creation.'
+                    for field_name in forbidden_supplied
                 })
-        
-        # Ensure manufacture date < expiry date
-        manufacture_date = data.get('manufacture_date')
-        expiry_date = data.get('expiry_date')
-        
-        if manufacture_date and expiry_date:
-            if manufacture_date >= expiry_date:
+
+        conversions = data.get('unit_conversions', [])
+        seen_units = set()
+        for conversion in conversions:
+            unit_name = conversion['unit_name']
+            if unit_name in seen_units:
                 raise serializers.ValidationError({
-                    'expiry_date': 'Expiry date must be after manufacture date'
+                    'unit_conversions': f'Duplicate unit conversion "{unit_name}" is not allowed.'
                 })
-        
+            if int(conversion['factor_to_base_unit']) <= 0:
+                raise serializers.ValidationError({
+                    'unit_conversions': f'Conversion factor for "{unit_name}" must be greater than 0.'
+                })
+            seen_units.add(unit_name)
+
         return data
 
+    def _save_unit_conversions(self, medicine, conversions):
+        MedicineUnitConversion.objects.filter(medicine=medicine).update(is_base_unit=False)
+        MedicineUnitConversion.objects.update_or_create(
+            medicine=medicine,
+            unit_name=medicine.base_unit,
+            defaults={
+                'factor_to_base_unit': 1,
+                'is_base_unit': True,
+                'allow_purchase': True,
+                'allow_sale': True,
+                'is_active': True,
+                'sort_order': 0,
+            },
+        )
+
+        for index, conversion in enumerate(conversions, start=1):
+            if conversion['unit_name'] == medicine.base_unit:
+                continue
+            MedicineUnitConversion.objects.update_or_create(
+                medicine=medicine,
+                unit_name=conversion['unit_name'],
+                defaults={
+                    'factor_to_base_unit': conversion['factor_to_base_unit'],
+                    'is_base_unit': False,
+                    'allow_purchase': conversion.get('allow_purchase', True),
+                    'allow_sale': conversion.get('allow_sale', True),
+                    'is_active': conversion.get('is_active', True),
+                    'sort_order': conversion.get('sort_order', index),
+                },
+            )
+
+    @transaction.atomic
     def create(self, validated_data):
-        """
-        Keep medicine creation UX lightweight by filling non-essential fields
-        with backend defaults when omitted by the user.
-        """
-        if not validated_data.get('batch_number'):
-            validated_data['batch_number'] = f"AUTO-{timezone.now().strftime('%Y%m%d')}-{uuid4().hex[:6].upper()}"
-
-        if not validated_data.get('manufacture_date'):
-            validated_data['manufacture_date'] = timezone.now().date()
-
-        purchase_price = validated_data.get('purchase_price')
-        selling_price = validated_data.get('selling_price')
-
-        if purchase_price is None and selling_price is None:
-            validated_data['purchase_price'] = Decimal('0.01')
-            validated_data['selling_price'] = Decimal('0.02')
-        elif purchase_price is None and selling_price is not None:
-            validated_data['purchase_price'] = max(Decimal('0.01'), selling_price * Decimal('0.8'))
-        elif purchase_price is not None and selling_price is None:
-            validated_data['selling_price'] = max(purchase_price + Decimal('0.01'), purchase_price * Decimal('1.2'))
-
-        validated_data.setdefault('stock_quantity', 0)
+        conversions = validated_data.pop('unit_conversions', [])
+        validated_data.pop('dosage_form', None)
+        validated_data['unit'] = validated_data['base_unit']
         validated_data.setdefault('min_stock_level', 10)
         validated_data.setdefault('max_stock_level', 1000)
-        validated_data.setdefault('unit', 'pieces')
         validated_data.setdefault('requires_prescription', False)
         validated_data.setdefault('is_active', True)
+        validated_data['unit_review_required'] = False
+        medicine = super().create(validated_data)
+        self._save_unit_conversions(medicine, conversions)
+        return medicine
 
-        return super().create(validated_data)
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        conversions = validated_data.pop('unit_conversions', None)
+        validated_data.pop('dosage_form', None)
+        if 'base_unit' in validated_data:
+            validated_data['unit'] = validated_data['base_unit']
+            validated_data['unit_review_required'] = False
+        medicine = super().update(instance, validated_data)
+        if conversions is not None:
+            self._save_unit_conversions(medicine, conversions)
+        return medicine
 
 
 class StockTransactionSerializer(serializers.ModelSerializer):
@@ -214,7 +315,7 @@ class StockTransactionSerializer(serializers.ModelSerializer):
 class StockAdjustmentSerializer(serializers.Serializer):
     """Serializer for manual stock adjustments"""
     
-    medicine_id = serializers.IntegerField()
+    medicine_id = serializers.UUIDField()
     adjustment_type = serializers.ChoiceField(choices=['increase', 'decrease'])
     quantity = serializers.IntegerField(min_value=1)
     reason = serializers.CharField(max_length=500)
@@ -224,3 +325,41 @@ class StockAdjustmentSerializer(serializers.Serializer):
         if not Medicine.objects.filter(id=value).exists():
             raise serializers.ValidationError("Medicine not found")
         return value
+
+
+class MedicineUnitConversionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MedicineUnitConversion
+        fields = [
+            'id',
+            'unit_name',
+            'factor_to_base_unit',
+            'is_base_unit',
+            'allow_purchase',
+            'allow_sale',
+            'is_active',
+            'sort_order',
+        ]
+
+
+class MedicineBatchSerializer(serializers.ModelSerializer):
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True)
+
+    class Meta:
+        model = MedicineBatch
+        fields = [
+            'id',
+            'batch_number',
+            'manufacture_date',
+            'expiry_date',
+            'purchase_price',
+            'selling_price',
+            'quantity_received',
+            'quantity_on_hand',
+            'received_at',
+            'supplier',
+            'supplier_name',
+            'is_active',
+            'is_legacy',
+            'notes',
+        ]

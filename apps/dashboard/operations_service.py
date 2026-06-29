@@ -5,7 +5,7 @@ from datetime import timedelta
 from django.db.models import F
 from django.utils import timezone
 
-from apps.inventory.models import Medicine
+from apps.inventory.models import Medicine, MedicineBatch
 from apps.sales.models import Sale
 from apps.suppliers.models import Purchase
 
@@ -25,9 +25,10 @@ class OperationsDashboardService:
         sales_today = Sale.objects.filter(sale_date__gte=today_start)
         pending_sales = apply_sale_filters(Sale.objects.filter(payment_status__in=['pending', 'partial']), filters)
         pending_purchases = Purchase.objects.filter(payment_status__in=['pending', 'partial']).count()
-        expiring_soon = Medicine.objects.filter(
+        expiring_soon = MedicineBatch.objects.filter(
+            medicine__is_active=True,
             is_active=True,
-            stock_quantity__gt=0,
+            quantity_on_hand__gt=0,
             expiry_date__gte=timezone.localdate(),
             expiry_date__lte=timezone.localdate() + timedelta(days=30),
         ).count()
@@ -67,7 +68,12 @@ class OperationsDashboardService:
                 },
                 {
                     'label': 'Expired stock still on shelves',
-                    'count': Medicine.objects.filter(is_active=True, stock_quantity__gt=0, expiry_date__lt=timezone.localdate()).count(),
+                    'count': MedicineBatch.objects.filter(
+                        medicine__is_active=True,
+                        is_active=True,
+                        quantity_on_hand__gt=0,
+                        expiry_date__lt=timezone.localdate(),
+                    ).count(),
                     'status': 'critical',
                 },
             ],

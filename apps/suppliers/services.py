@@ -1,21 +1,24 @@
 """
 Service layer for supplier and purchase operations.
-
-Handles business logic for:
-- Purchase creation with items
-- Receiving items and updating stock
-- Payment status updates
-- Dashboard statistics
 """
-from decimal import Decimal
+from __future__ import annotations
+
 from datetime import date
+from decimal import Decimal
+
 from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
+from rest_framework import serializers
+
+from apps.inventory.models import Medicine, MedicineBatch
+from apps.inventory.selectors import (
+    convert_to_base_units,
+    get_or_create_base_unit_conversion,
+)
+from apps.inventory.stock_service import increase_batch_stock
 
 from .models import Purchase, PurchaseItem
-from apps.inventory.models import StockTransaction, Medicine
-from rest_framework import serializers
 
 
 class SupplierService:
@@ -23,15 +26,6 @@ class SupplierService:
 
     @staticmethod
     def get_supplier_stats(supplier):
-        """Get supplier statistics.
-
-        Returns:
-        - total_purchases: Count of purchases
-        - total_amount_spent: Total amount spent
-        - pending_payments: Amount still owed
-        - active_medicines: Count of active medicines from supplier
-        - last_purchase_date: Most recent purchase date
-        """
         return {
             'total_purchases': supplier.purchases.count(),
             'total_amount_spent': supplier.purchases.aggregate(
@@ -44,7 +38,7 @@ class SupplierService:
             )['total'] or Decimal('0'),
             'active_medicines': supplier.medicines.filter(is_active=True).count(),
             'last_purchase_date': supplier.purchases.order_by('-purchase_date').first().purchase_date
-                if supplier.purchases.exists() else None
+            if supplier.purchases.exists() else None,
         }
 
 
@@ -52,21 +46,79 @@ class PurchaseService:
     """Business logic for purchase operations."""
 
     @staticmethod
-    def create_purchase_with_items(user, data):
-        """Create a purchase with items in one transaction.
+    def _resolve_purchase_item_quantity(medicine, item_data):
+        unit_name = item_data.get('unit_name') or medicine.base_unit or medicine.unit
+        quantity_in_unit = int(item_data['quantity'])
+        conversion, quantity_base_units = convert_to_base_units(
+            medicine,
+            quantity_in_unit,
+            unit_name,
+            allow_purchase=True,
+        )
+        entered_unit_price = Decimal(str(item_data['unit_price']))
+        cost_per_base_unit = (
+            entered_unit_price / Decimal(conversion.factor_to_base_unit)
+        ).quantize(Decimal('0.01'))
+        return conversion, unit_name, quantity_in_unit, quantity_base_units, cost_per_base_unit
 
-        Expected data keys: supplier, invoice_number, purchase_date, items,
-        tax_amount, discount_amount, payment_status, notes
-        """
+    @staticmethod
+    def _build_batch(medicine, purchase, item_data, cost_per_base_unit):
+        batch_number = item_data.get('batch_number') or (
+            f'PUR-{purchase.invoice_number}-{medicine.id.hex[:8].upper()}'
+        )
+        expiry_date = item_data.get('expiry_date')
+        manufacture_date = item_data.get('manufacture_date')
+
+        if isinstance(expiry_date, str):
+            expiry_date = date.fromisoformat(expiry_date)
+        if isinstance(manufacture_date, str):
+            manufacture_date = date.fromisoformat(manufacture_date)
+
+        return MedicineBatch.objects.create(
+            medicine=medicine,
+            supplier=purchase.supplier,
+            batch_number=batch_number,
+            manufacture_date=manufacture_date,
+            expiry_date=expiry_date,
+            purchase_price=cost_per_base_unit,
+            selling_price=medicine.selling_price,
+            quantity_received=0,
+            quantity_on_hand=0,
+            notes=f'Created from purchase {purchase.invoice_number}',
+        )
+
+    @staticmethod
+    def create_purchase_with_items(user, data):
         items_data = data.get('items') or []
 
         with transaction.atomic():
-            # Calculate total from items
+            resolved_items = []
             total_amount = Decimal('0')
-            for item in items_data:
-                qty = Decimal(item['quantity'])
-                unit_price = Decimal(item['unit_price'])
-                total_amount += qty * unit_price
+
+            for item_data in items_data:
+                medicine = Medicine.objects.select_for_update().get(pk=item_data['medicine'])
+                if not medicine.base_unit:
+                    medicine.base_unit = medicine.unit or 'pieces'
+                    medicine.save(update_fields=['base_unit', 'updated_at'])
+                get_or_create_base_unit_conversion(medicine)
+
+                conversion, unit_name, quantity_in_unit, quantity_base_units, cost_per_base_unit = (
+                    PurchaseService._resolve_purchase_item_quantity(medicine, item_data)
+                )
+                total_amount += Decimal(quantity_base_units) * cost_per_base_unit
+                resolved_items.append({
+                    'medicine': medicine,
+                    'conversion': conversion,
+                    'unit_name': unit_name,
+                    'quantity_in_unit': quantity_in_unit,
+                    'quantity_base_units': quantity_base_units,
+                    'cost_per_base_unit': cost_per_base_unit,
+                    'discount_percent': Decimal(item_data.get('discount_percent', 0)),
+                    'tax_percent': Decimal(item_data.get('tax_percent', 0)),
+                    'batch_number': item_data.get('batch_number'),
+                    'expiry_date': item_data.get('expiry_date'),
+                    'manufacture_date': item_data.get('manufacture_date'),
+                })
 
             tax_amount = Decimal(data.get('tax_amount', 0))
             discount_amount = Decimal(data.get('discount_amount', 0))
@@ -82,83 +134,61 @@ class PurchaseService:
                 net_amount=net_amount,
                 payment_status=data.get('payment_status', 'pending'),
                 notes=data.get('notes', ''),
-                created_by=user
+                created_by=user,
             )
 
-            # Create purchase items
-            for item_data in items_data:
+            for item in resolved_items:
+                medicine = item['medicine']
                 purchase_item = PurchaseItem.objects.create(
                     purchase=purchase,
-                    medicine_id=item_data['medicine'],
-                    quantity=item_data['quantity'],
-                    unit_price=Decimal(item_data['unit_price']),
-                    discount_percent=Decimal(item_data.get('discount_percent', 0)),
-                    tax_percent=Decimal(item_data.get('tax_percent', 0))
+                    medicine=medicine,
+                    quantity=item['quantity_base_units'],
+                    quantity_base_units=item['quantity_base_units'],
+                    quantity_in_unit=item['quantity_in_unit'],
+                    unit_conversion=item['conversion'],
+                    unit_name=item['unit_name'],
+                    unit_price=item['cost_per_base_unit'],
+                    cost_price_snapshot=item['cost_per_base_unit'],
+                    discount_percent=item['discount_percent'],
+                    tax_percent=item['tax_percent'],
+                    received_quantity=0,
                 )
 
-                # Treat procurement as the source of truth for stock and cost.
-                received_qty = int(item_data['quantity'])
-                purchase_item.received_quantity = received_qty
-                purchase_item.save(update_fields=['received_quantity'])
+                batch = PurchaseService._build_batch(
+                    medicine,
+                    purchase,
+                    item,
+                    item['cost_per_base_unit'],
+                )
+                purchase_item.batch = batch
+                purchase_item.received_quantity = item['quantity_base_units']
+                purchase_item.save(update_fields=['batch', 'received_quantity'])
 
-                medicine = Medicine.objects.select_for_update().get(pk=item_data['medicine'])
-                old_stock = int(medicine.stock_quantity or 0)
-                old_cost = Decimal(medicine.purchase_price or 0)
-                new_cost = Decimal(item_data['unit_price'])
+                increase_batch_stock(
+                    batch=batch,
+                    quantity=item['quantity_base_units'],
+                    created_by=user,
+                    transaction_type='purchase',
+                    reference_type='purchase',
+                    reference_id=str(purchase.id),
+                    notes=f'Received from purchase {purchase.invoice_number}',
+                    unit_conversion=item['conversion'],
+                    quantity_in_unit=item['quantity_in_unit'],
+                    increase_received=True,
+                )
 
-                # Weighted average cost update.
-                total_old_value = old_cost * Decimal(old_stock)
-                total_new_value = new_cost * Decimal(received_qty)
-                combined_qty = old_stock + received_qty
-                weighted_cost = (total_old_value + total_new_value) / Decimal(combined_qty) if combined_qty > 0 else new_cost
-
-                medicine.purchase_price = weighted_cost.quantize(Decimal('0.01'))
-
-                # Keep selling price populated (manager can adjust later in inventory).
+                medicine.refresh_from_db(fields=['selling_price'])
                 if not medicine.selling_price or medicine.selling_price <= Decimal('0'):
                     medicine.selling_price = max(
-                        medicine.purchase_price + Decimal('0.01'),
-                        (medicine.purchase_price * Decimal('1.20')).quantize(Decimal('0.01'))
+                        item['cost_per_base_unit'] + Decimal('0.01'),
+                        (item['cost_per_base_unit'] * Decimal('1.20')).quantize(Decimal('0.01')),
                     )
-
-                # Optional batch/expiry provided by procurement flow updates medicine lot metadata.
-                batch_number = item_data.get('batch_number')
-                expiry_date = item_data.get('expiry_date')
-                manufacture_date = item_data.get('manufacture_date')
-
-                if batch_number:
-                    medicine.batch_number = batch_number
-                if expiry_date:
-                    medicine.expiry_date = date.fromisoformat(expiry_date) if isinstance(expiry_date, str) else expiry_date
-                if manufacture_date:
-                    medicine.manufacture_date = date.fromisoformat(manufacture_date) if isinstance(manufacture_date, str) else manufacture_date
-
-                medicine.save()
-
-                StockTransaction.objects.create(
-                    medicine=medicine,
-                    transaction_type='purchase',
-                    quantity=received_qty,
-                    reference_type='purchase',
-                    reference_id=purchase.id,
-                    notes=f'Received from purchase {purchase.invoice_number}',
-                    created_by=user
-                )
+                    medicine.save(update_fields=['selling_price', 'updated_at'])
 
             return purchase
 
     @staticmethod
     def receive_items(purchase, items_to_receive, user):
-        """Mark items as received and update stock.
-
-        Args:
-            purchase: Purchase instance
-            items_to_receive: List of {'item_id': id, 'received_quantity': qty}
-            user: User processing the receipt
-
-        Returns:
-            Dictionary with receipt results
-        """
         with transaction.atomic():
             received_items = []
             for item_data in items_to_receive:
@@ -166,17 +196,17 @@ class PurchaseService:
                 received_qty = int(item_data['received_quantity'])
 
                 try:
-                    item = PurchaseItem.objects.select_for_update().get(
-                        pk=item_id,
-                        purchase=purchase
-                    )
+                    item = PurchaseItem.objects.select_for_update().select_related(
+                        'medicine',
+                        'batch',
+                        'unit_conversion',
+                        'purchase__supplier',
+                    ).get(pk=item_id, purchase=purchase)
                 except PurchaseItem.DoesNotExist:
                     raise serializers.ValidationError(f'Purchase item {item_id} not found')
 
-                if received_qty > item.quantity:
-                    raise serializers.ValidationError(
-                        f'Received quantity ({received_qty}) exceeds ordered quantity ({item.quantity})'
-                    )
+                if received_qty <= 0:
+                    raise serializers.ValidationError('Received quantity must be greater than 0')
 
                 outstanding_qty = item.quantity - item.received_quantity
                 if received_qty > outstanding_qty:
@@ -184,43 +214,52 @@ class PurchaseService:
                         f'Received quantity ({received_qty}) exceeds outstanding quantity ({outstanding_qty})'
                     )
 
-                # Update received quantity cumulatively
-                item.received_quantity = item.received_quantity + received_qty
-                item.save()
+                batch = item.batch
+                if not batch:
+                    batch = MedicineBatch.objects.create(
+                        medicine=item.medicine,
+                        supplier=purchase.supplier,
+                        batch_number=item.medicine.batch_number,
+                        manufacture_date=item.medicine.manufacture_date,
+                        expiry_date=item.medicine.expiry_date,
+                        purchase_price=item.cost_price_snapshot or item.unit_price,
+                        selling_price=item.medicine.selling_price,
+                        quantity_received=0,
+                        quantity_on_hand=0,
+                        notes=f'Backfilled batch for purchase {purchase.invoice_number}',
+                    )
+                    item.batch = batch
 
-                # Create stock transaction (increases stock)
-                StockTransaction.objects.create(
-                    medicine=item.medicine,
-                    transaction_type='purchase',
+                increase_batch_stock(
+                    batch=batch,
                     quantity=received_qty,
+                    created_by=user,
+                    transaction_type='purchase',
                     reference_type='purchase',
-                    reference_id=purchase.id,
-                    notes=f'Received from purchase {purchase.invoice_number}',
-                    created_by=user
+                    reference_id=str(purchase.id),
+                    notes=f'Additional receipt from purchase {purchase.invoice_number}',
+                    unit_conversion=item.unit_conversion,
+                    quantity_in_unit=received_qty,
+                    increase_received=True,
                 )
+
+                item.received_quantity += received_qty
+                item.save(update_fields=['batch', 'received_quantity'])
 
                 received_items.append({
                     'item_id': item_id,
                     'medicine': item.medicine.name,
-                    'received_quantity': received_qty
+                    'received_quantity': received_qty,
+                    'batch_number': batch.batch_number,
                 })
 
             return {
                 'purchase_id': purchase.id,
-                'received_items': received_items
+                'received_items': received_items,
             }
 
     @staticmethod
     def get_purchase_dashboard_stats(queryset):
-        """Get purchase dashboard statistics.
-
-        Returns:
-        - total_purchases: Count
-        - total_amount: Sum of net amounts
-        - pending_amount: Pending/partial payments
-        - paid_amount: Paid amounts
-        - recent_purchases_count: Last 30 days
-        """
         return {
             'total_purchases': queryset.count(),
             'total_amount': queryset.aggregate(total=Sum('net_amount'))['total'] or Decimal('0'),
@@ -232,5 +271,5 @@ class PurchaseService:
             ).aggregate(total=Sum('net_amount'))['total'] or Decimal('0'),
             'recent_purchases_count': queryset.filter(
                 purchase_date__gte=timezone.now().date() - timezone.timedelta(days=30)
-            ).count()
+            ).count(),
         }

@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Supplier, Purchase, PurchaseItem
 from apps.inventory.models import Medicine
+from apps.inventory.selectors import convert_to_base_units
 from decimal import Decimal
 
 
@@ -40,14 +41,17 @@ class PurchaseItemSerializer(serializers.ModelSerializer):
     """Serializer for purchase items"""
     
     medicine_name = serializers.CharField(source='medicine.name', read_only=True)
-    medicine_display_id = serializers.IntegerField(source='medicine.medicine_id', read_only=True)
+    medicine_display_id = serializers.CharField(source='medicine.id', read_only=True)
+    batch_number = serializers.CharField(source='batch.batch_number', read_only=True)
     
     class Meta:
         model = PurchaseItem
         fields = [
             'id', 'medicine', 'medicine_name', 'medicine_display_id',
-            'quantity', 'unit_price', 'discount_percent', 'tax_percent',
-            'subtotal', 'received_quantity'
+            'quantity', 'quantity_base_units', 'quantity_in_unit',
+            'unit_conversion', 'unit_name', 'unit_price', 'cost_price_snapshot',
+            'discount_percent', 'tax_percent', 'subtotal', 'received_quantity',
+            'batch', 'batch_number'
         ]
         read_only_fields = ['id', 'subtotal']
     
@@ -173,16 +177,25 @@ class CreatePurchaseSerializer(serializers.Serializer):
         """Validate purchase items"""
         for item in value:
             # Check required fields
-            if 'medicine' not in item or 'quantity' not in item or 'unit_price' not in item:
+            required_fields = ['medicine', 'quantity', 'unit_price', 'batch_number', 'expiry_date', 'manufacture_date', 'unit_name']
+            if any(field not in item or item.get(field) in (None, '') for field in required_fields):
                 raise serializers.ValidationError(
-                    "Each item must have medicine, quantity, and unit_price"
+                    "Each item must have medicine, quantity, unit_name, unit_price, batch_number, manufacture_date, and expiry_date"
                 )
             
             # Validate medicine exists
             try:
-                Medicine.objects.get(pk=item['medicine'])
+                medicine = Medicine.objects.get(pk=item['medicine'])
             except Medicine.DoesNotExist:
                 raise serializers.ValidationError(f"Medicine with id {item['medicine']} not found")
+
+            unit_name = item.get('unit_name') or medicine.base_unit or medicine.unit
+            convert_to_base_units(
+                medicine,
+                int(item['quantity']),
+                unit_name,
+                allow_purchase=True,
+            )
             
             # Validate quantity
             if item['quantity'] <= 0:
@@ -228,4 +241,3 @@ class ReceiveItemsSerializer(serializers.Serializer):
                 raise serializers.ValidationError("Received quantity cannot be negative")
         
         return value
-

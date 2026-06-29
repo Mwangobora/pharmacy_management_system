@@ -5,7 +5,7 @@ from django.db.models.functions import Coalesce
 
 from apps.sales.models import Sale, SaleItem
 
-from .query_utils import apply_sale_filters, cost_visibility, integer_zero, money_zero
+from .query_utils import apply_sale_filters, cost_visibility, integer_zero, money_zero, sale_item_cost_expression
 
 
 class PerformanceDashboardService:
@@ -30,7 +30,7 @@ class PerformanceDashboardService:
         ).filter(sale_count__gt=1).count()
 
         gross_profit_expression = ExpressionWrapper(
-            F('subtotal') - (F('quantity') * F('medicine__purchase_price')),
+            F('subtotal') - sale_item_cost_expression(),
             output_field=DecimalField(max_digits=14, decimal_places=2),
         )
         category_performance = items.values('medicine__category__name').annotate(

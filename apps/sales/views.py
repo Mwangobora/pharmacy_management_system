@@ -65,7 +65,7 @@ class CustomerViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
         customer = self.get_object()
         
         summary = {
-            'customer_id': customer.customer_id,
+            'customer_id': str(customer.id),
             'customer_name': customer.full_name,
             'loyalty_points': customer.loyalty_points,
             'total_purchases': customer.sales.count(),
@@ -98,7 +98,7 @@ class CustomerViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
         
         return Response({
             'message': 'Loyalty points added successfully',
-            'customer_id': customer.customer_id,
+            'customer_id': str(customer.id),
             'new_loyalty_points': customer.loyalty_points
         })
 
@@ -106,7 +106,7 @@ class CustomerViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
 class SaleViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
     queryset = Sale.objects.select_related(
         'customer', 'served_by'
-    ).prefetch_related('items', 'payments').all()
+    ).prefetch_related('items__batch_allocations__batch', 'payments').all()
     permission_classes = [IsAuthenticated, HasViewPermissions]
     required_permissions = {
         'list': ['sales.sale.view'],

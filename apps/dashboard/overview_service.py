@@ -4,7 +4,7 @@ from django.conf import settings
 from django.db.models import Count, DecimalField, ExpressionWrapper, F, Sum
 from django.db.models.functions import Coalesce
 
-from apps.inventory.models import Medicine
+from apps.inventory.models import Medicine, MedicineBatch
 from apps.sales.models import Payment, Sale, SaleItem
 
 from .comparison import build_metric_payload
@@ -15,6 +15,7 @@ from .query_utils import (
     determine_granularity,
     integer_zero,
     money_zero,
+    sale_item_cost_expression,
     refund_transactions,
     refund_value_subquery,
     truncate_for_granularity,
@@ -43,13 +44,13 @@ class OverviewDashboardService:
         if can_view_costs:
             gross_profit = sale_item_queryset.aggregate(
                 value=Coalesce(Sum(ExpressionWrapper(
-                    F('subtotal') - (F('quantity') * F('medicine__purchase_price')),
+                    F('subtotal') - sale_item_cost_expression(),
                     output_field=DecimalField(max_digits=14, decimal_places=2),
                 )), money_zero())
             )['value']
             previous_gross_profit = previous_item_queryset.aggregate(
                 value=Coalesce(Sum(ExpressionWrapper(
-                    F('subtotal') - (F('quantity') * F('medicine__purchase_price')),
+                    F('subtotal') - sale_item_cost_expression(),
                     output_field=DecimalField(max_digits=14, decimal_places=2),
                 )), money_zero())
             )['value']
@@ -60,9 +61,9 @@ class OverviewDashboardService:
         previous_count = previous_sales.count()
         avg_sale = revenue / sales_count if sales_count else 0
         previous_avg = previous_revenue / previous_count if previous_count else 0
-        stock_value = Medicine.objects.filter(is_active=True).aggregate(
+        stock_value = MedicineBatch.objects.filter(medicine__is_active=True, is_active=True).aggregate(
             value=Coalesce(Sum(ExpressionWrapper(
-                F('stock_quantity') * F('purchase_price'),
+                F('quantity_on_hand') * F('purchase_price'),
                 output_field=DecimalField(max_digits=14, decimal_places=2),
             )), money_zero())
         )['value'] if can_view_costs else None
@@ -92,7 +93,7 @@ class OverviewDashboardService:
 
         granularity = determine_granularity(filters)
         gross_profit_expression = ExpressionWrapper(
-            F('subtotal') - (F('quantity') * F('medicine__purchase_price')),
+            F('subtotal') - sale_item_cost_expression(),
             output_field=DecimalField(max_digits=14, decimal_places=2),
         )
         trend = sale_item_queryset.values(
@@ -123,7 +124,12 @@ class OverviewDashboardService:
                 'key': 'expired',
                 'label': 'Expired medicines',
                 'severity': 'critical',
-                'count': Medicine.objects.filter(is_active=True, expiry_date__lt=filters.date_to.date(), stock_quantity__gt=0).count(),
+                'count': MedicineBatch.objects.filter(
+                    medicine__is_active=True,
+                    is_active=True,
+                    expiry_date__lt=filters.date_to.date(),
+                    quantity_on_hand__gt=0,
+                ).count(),
                 'href': '/dashboard/inventory/medicines?expiry_status=expired',
             },
             {

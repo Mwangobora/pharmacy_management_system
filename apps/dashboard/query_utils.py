@@ -5,7 +5,7 @@ from datetime import timedelta
 from django.db.models import DecimalField, Exists, ExpressionWrapper, F, IntegerField, OuterRef, Subquery, Sum, UUIDField, Value
 from django.db.models.functions import Cast, Coalesce, TruncDate, TruncHour, TruncMonth, TruncWeek
 
-from apps.inventory.models import Medicine, StockTransaction
+from apps.inventory.models import Medicine, MedicineBatch, StockTransaction
 from apps.sales.models import SaleItem
 
 
@@ -85,7 +85,7 @@ def truncate_for_granularity(field_name, granularity):
 
 def sale_item_cost_expression():
     return ExpressionWrapper(
-        F('quantity') * F('medicine__purchase_price'),
+        F('quantity') * F('cost_price_snapshot'),
         output_field=MONEY_FIELD,
     )
 

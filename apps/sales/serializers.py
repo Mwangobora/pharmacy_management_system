@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Customer, Sale, SaleItem, Payment
 from apps.inventory.models import Medicine
+from apps.inventory.selectors import convert_to_base_units
 from django.db import transaction, models
 from decimal import Decimal
 
@@ -66,35 +67,40 @@ class SaleItemSerializer(serializers.ModelSerializer):
     """Serializer for sale items"""
     
     medicine_name = serializers.CharField(source='medicine.name', read_only=True)
-    medicine_display_id = serializers.IntegerField(source='medicine.medicine_id', read_only=True)
+    medicine_display_id = serializers.CharField(source='medicine.id', read_only=True)
     profit = serializers.SerializerMethodField()
+    batch_allocations = serializers.SerializerMethodField()
     
     class Meta:
         model = SaleItem
         fields = [
             'id', 'medicine', 'medicine_name', 'medicine_display_id',
-            'batch_number', 'quantity', 'unit_price', 'discount_percent',
-            'tax_percent', 'subtotal', 'profit'
+            'batch_number', 'quantity', 'unit_conversion', 'sold_unit_name',
+            'sold_quantity_in_unit', 'unit_price', 'selling_price_snapshot',
+            'cost_price_snapshot', 'discount_percent', 'tax_percent',
+            'subtotal', 'profit', 'refunded_quantity', 'batch_allocations'
         ]
         read_only_fields = ['id', 'subtotal']
     
     def get_profit(self, obj):
-        """Calculate profit for this item"""
-        # Prefer a purchase_price stored on the sale item (for historical accuracy)
-        # fall back to the medicine's purchase_price when not available.
-        purchase_price = None
-        if hasattr(obj, 'purchase_price') and obj.purchase_price is not None:
-            purchase_price = obj.purchase_price
-        else:
-            purchase_price = getattr(obj.medicine, 'purchase_price', None)
-
-        try:
-            if purchase_price is None:
-                return 0.0
-            profit_per_unit = Decimal(obj.unit_price) - Decimal(purchase_price)
-            return float(profit_per_unit * Decimal(obj.quantity))
-        except Exception:
+        if obj.profit_snapshot is not None:
+            return float(obj.profit_snapshot)
+        if obj.cost_price_snapshot is None:
             return 0.0
+        return float((Decimal(obj.unit_price) - Decimal(obj.cost_price_snapshot)) * Decimal(obj.quantity))
+
+    def get_batch_allocations(self, obj):
+        return [
+            {
+                'batch_id': str(allocation.batch_id),
+                'batch_number': allocation.batch.batch_number,
+                'quantity': allocation.quantity,
+                'cost_price_snapshot': float(allocation.cost_price_snapshot),
+                'selling_price_snapshot': float(allocation.selling_price_snapshot),
+                'returned_quantity': allocation.returned_quantity,
+            }
+            for allocation in obj.batch_allocations.select_related('batch').all()
+        ]
     
     def validate_quantity(self, value):
         """Ensure quantity is positive"""
@@ -108,14 +114,25 @@ class SaleItemSerializer(serializers.ModelSerializer):
         quantity = data.get('quantity')
         
         if medicine and quantity:
-            if medicine.stock_quantity < quantity:
+            unit_name = data.get('unit_name') or medicine.base_unit or medicine.unit
+            _, quantity_base_units = convert_to_base_units(
+                medicine,
+                int(quantity),
+                unit_name,
+                allow_sale=True,
+            )
+            if medicine.stock_quantity < quantity_base_units:
                 raise serializers.ValidationError({
-                    'quantity': f'Insufficient stock. Available: {medicine.stock_quantity}'
+                    'quantity': f'Insufficient stock. Available: {medicine.stock_quantity} {medicine.base_unit}'
+                })
+            if medicine.selling_price is None:
+                raise serializers.ValidationError({
+                    'medicine': 'Selling price must be set before this medicine can be sold.'
                 })
             
             # Check if medicine is expired
             from django.utils import timezone
-            if medicine.expiry_date < timezone.now().date():
+            if medicine.expiry_date and medicine.expiry_date < timezone.now().date():
                 raise serializers.ValidationError({
                     'medicine': 'This medicine has expired and cannot be sold'
                 })
@@ -200,12 +217,7 @@ class SaleDetailSerializer(serializers.ModelSerializer):
         return float(obj.net_amount) - total_paid
     
     def get_total_profit(self, obj):
-        """Calculate total profit from this sale"""
-        total_profit = 0
-        for item in obj.items.all():
-            profit_per_unit = item.unit_price - item.medicine.purchase_price
-            total_profit += float(profit_per_unit * item.quantity)
-        return total_profit
+        return float(obj.items.aggregate(total=models.Sum('profit_snapshot'))['total'] or 0)
     
     def validate_invoice_number(self, value):
         """Ensure invoice number is unique"""
@@ -271,16 +283,27 @@ class CreateSaleSerializer(serializers.Serializer):
             # Validate medicine exists and has stock
             try:
                 medicine = Medicine.objects.get(pk=item['medicine'])
+                unit_name = item.get('unit_name') or medicine.base_unit or medicine.unit
+                _, quantity_base_units = convert_to_base_units(
+                    medicine,
+                    int(item['quantity']),
+                    unit_name,
+                    allow_sale=True,
+                )
                 
                 # Check stock
-                if medicine.stock_quantity < item['quantity']:
+                if medicine.stock_quantity < quantity_base_units:
                     raise serializers.ValidationError(
                         f"{medicine.name}: Insufficient stock (Available: {medicine.stock_quantity})"
+                    )
+                if medicine.selling_price is None:
+                    raise serializers.ValidationError(
+                        f"{medicine.name}: Selling price must be set before this medicine can be sold"
                     )
                 
                 # Check expiry
                 from django.utils import timezone
-                if medicine.expiry_date < timezone.now().date():
+                if medicine.expiry_date and medicine.expiry_date < timezone.now().date():
                     raise serializers.ValidationError(
                         f"{medicine.name}: Medicine has expired"
                     )
