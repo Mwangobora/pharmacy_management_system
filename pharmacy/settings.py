@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     
     # Your apps
     'apps.users',
+    'apps.dashboard',
     'apps.inventory',
     'apps.suppliers',
     'apps.sales',

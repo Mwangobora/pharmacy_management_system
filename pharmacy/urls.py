@@ -45,6 +45,7 @@ urlpatterns = [
     path('api/auth/register/', DjoserUserViewSet.as_view({'post': 'create'}), name='register'),
     path('api/auth/login/', TokenObtainPairView.as_view(serializer_class=CustomTokenObtainPairSerializer), name='login'),
     path('api/', include(router.urls)),
+    path('api/dashboard/', include('apps.dashboard.urls')),
     path('api/users/', include('apps.users.urls')),
     path('api/auth/', include('apps.users.auth_urls')),
     # Authentication endpoints (Djoser + JWT)
