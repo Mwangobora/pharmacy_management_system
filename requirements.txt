@@ -10,3 +10,5 @@ celery>=5.2.7
 djoser
 djangorestframework_simplejwt
 django-cors-headers
+pytest>=7.0
+pytest-django>=4.8

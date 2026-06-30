@@ -147,6 +147,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         ).filter(
             models.Q(direct_user_assignments__expires_at__isnull=True) |
             models.Q(direct_user_assignments__expires_at__gt=now)
+        ).filter(
+            models.Q(profile__isnull=True) | models.Q(profile__is_active=True)
         )
 
     def get_effective_permissions_queryset(self):
@@ -157,10 +159,17 @@ class User(AbstractBaseUser, PermissionsMixin):
             roles__user_role_assignments__user=self,
             roles__user_role_assignments__is_active=True,
             roles__user_role_assignments__role__is_active=True,
+        ).filter(
+            models.Q(profile__isnull=True) | models.Q(profile__is_active=True)
         )
         direct_permissions = self.get_active_direct_permissions()
-        legacy_role_permissions = Permission.objects.filter(roles__users=self) if self.role_id else Permission.objects.none()
-        return (role_permissions | direct_permissions | legacy_role_permissions | self.user_permissions.all()).distinct()
+        legacy_role_permissions = Permission.objects.filter(
+            roles__users=self
+        ).filter(models.Q(profile__isnull=True) | models.Q(profile__is_active=True)) if self.role_id else Permission.objects.none()
+        user_permissions = self.user_permissions.filter(
+            models.Q(profile__isnull=True) | models.Q(profile__is_active=True)
+        )
+        return (role_permissions | direct_permissions | legacy_role_permissions | user_permissions).distinct()
 
     def get_effective_permissions(self):
         return list(self.get_effective_permissions_queryset().values_list('codename', flat=True).order_by('codename'))

@@ -1,45 +1,79 @@
 from django.contrib.auth.models import Permission
 from django.contrib.contenttypes.models import ContentType
-from django.db import transaction
-from django.utils.text import slugify
+from django.db import models, transaction
 
 from .models import AccessAuditLog, PermissionProfile, Role, User, UserDirectPermission, UserRoleAssignment
 from .permission_registry import DEFAULT_ROLES, PERMISSIONS
 
 
-def sync_permissions():
-    content_type = ContentType.objects.get_for_model(Role)
+def get_access_content_type(content_type_id=None):
+    if content_type_id:
+        return ContentType.objects.get(id=content_type_id)
+    return ContentType.objects.get_for_model(Role)
+
+
+def build_permission_codename(module, resource, action):
+    return f'{module}.{resource}.{action}'
+
+
+def bump_authorization_versions(users):
+    for user in users.distinct():
+        user.increment_authorization_version()
+
+
+def users_for_role(role):
+    return User.objects.filter(
+        models.Q(role_assignments__role=role, role_assignments__is_active=True)
+        | models.Q(role=role)
+    ).distinct()
+
+
+def users_for_permission(permission):
+    return User.objects.filter(
+        models.Q(direct_permission_assignments__permission=permission, direct_permission_assignments__is_active=True)
+        | models.Q(role_assignments__role__permissions=permission, role_assignments__is_active=True, role_assignments__role__is_active=True)
+        | models.Q(role__permissions=permission)
+        | models.Q(user_permissions=permission)
+    ).distinct()
+
+
+def sync_permissions(*, overwrite=False):
+    content_type = get_access_content_type()
     synced_permissions = []
 
     for codename, config in PERMISSIONS.items():
-        permission, _ = Permission.objects.update_or_create(
+        permission, created = Permission.objects.get_or_create(
             content_type=content_type,
             codename=codename,
             defaults={'name': config['name']},
         )
-        PermissionProfile.objects.update_or_create(
+        if overwrite and not created and permission.name != config['name']:
+            permission.name = config['name']
+            permission.save(update_fields=['name'])
+
+        profile, profile_created = PermissionProfile.objects.get_or_create(
             permission=permission,
-            defaults={
-                'module': config['module'],
-                'resource': config['resource'],
-                'action': config['action'],
-                'description': config.get('description', ''),
-                'is_active': True,
-                'is_system': True,
-                'is_assignable': True,
-            },
         )
+        if overwrite or profile_created:
+            profile.module = config['module']
+            profile.resource = config['resource']
+            profile.action = config['action']
+            profile.description = config.get('description', '')
+            profile.is_active = True
+            profile.is_system = True
+            profile.is_assignable = True
+            profile.save()
         synced_permissions.append(permission)
 
     return synced_permissions
 
 
-def sync_default_roles():
+def sync_default_roles(*, overwrite=False):
     permissions_by_code = {permission.codename: permission for permission in Permission.objects.filter(codename__in=PERMISSIONS)}
     roles = []
 
     for code, config in DEFAULT_ROLES.items():
-        role, _ = Role.objects.update_or_create(
+        role, created = Role.objects.get_or_create(
             code=code,
             defaults={
                 'name': config['name'],
@@ -48,7 +82,13 @@ def sync_default_roles():
                 'is_system': True,
             },
         )
-        role.permissions.set([permissions_by_code[codename] for codename in config['permissions'] if codename in permissions_by_code])
+        if overwrite or created:
+            role.name = config['name']
+            role.description = config.get('description', '')
+            role.is_active = True
+            role.is_system = True
+            role.save()
+            role.permissions.set([permissions_by_code[codename] for codename in config['permissions'] if codename in permissions_by_code])
         roles.append(role)
 
     return roles
@@ -128,6 +168,23 @@ def set_user_direct_permissions(user, permissions, *, actor=None, reason=''):
         after_state={'permission_ids': sorted(permission_ids)},
         reason=reason,
     )
+
+
+def set_role_permissions(role, permissions, *, actor=None, reason='', log_action=True):
+    permission_ids = sorted({permission.id for permission in permissions})
+
+    with transaction.atomic():
+        role.permissions.set(permissions)
+        bump_authorization_versions(users_for_role(role))
+
+    if log_action:
+        log_access_event(
+            actor=actor,
+            action='role.permissions.updated',
+            target_role=role,
+            after_state={'permission_ids': permission_ids},
+            reason=reason,
+        )
 
 
 def log_access_event(*, actor=None, action, target_user=None, target_role=None, target_permission=None, before_state=None, after_state=None, reason=''):

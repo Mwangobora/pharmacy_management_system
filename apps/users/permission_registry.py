@@ -41,6 +41,27 @@ PERMISSIONS = {
         'action': 'view',
         'description': 'Allows viewing permission definitions.',
     },
+    'access.permission.create': {
+        'name': 'Create permissions',
+        'module': 'access',
+        'resource': 'permission',
+        'action': 'create',
+        'description': 'Allows creating permission definitions.',
+    },
+    'access.permission.update': {
+        'name': 'Update permissions',
+        'module': 'access',
+        'resource': 'permission',
+        'action': 'update',
+        'description': 'Allows updating permission definitions.',
+    },
+    'access.permission.delete': {
+        'name': 'Delete permissions',
+        'module': 'access',
+        'resource': 'permission',
+        'action': 'delete',
+        'description': 'Allows deleting permission definitions.',
+    },
     'access.user.view': {
         'name': 'View users',
         'module': 'access',

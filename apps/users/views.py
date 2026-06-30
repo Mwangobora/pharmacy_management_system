@@ -9,8 +9,26 @@ from rest_framework.views import APIView
 
 from .models import Role, User
 from .permissions import HasViewPermissions, RBACPermissionMixin
-from .rbac import log_access_event, set_user_direct_permissions, set_user_roles, sync_default_roles, sync_existing_role_assignments, sync_permissions
-from .serializers import AuthMeSerializer, PermissionSerializer, RoleSerializer, UserAccessSerializer, UserSerializer
+from .rbac import (
+    log_access_event,
+    set_role_permissions,
+    set_user_direct_permissions,
+    set_user_roles,
+    sync_default_roles,
+    sync_existing_role_assignments,
+    sync_permissions,
+    users_for_permission,
+)
+from .serializers import (
+    AuthMeSerializer,
+    PermissionSerializer,
+    RolePermissionAssignmentSerializer,
+    RoleSerializer,
+    UserAccessSerializer,
+    UserPermissionAssignmentSerializer,
+    UserRoleAssignmentSerializer,
+    UserSerializer,
+)
 
 
 class AuthMeView(APIView):
@@ -79,21 +97,17 @@ class UserViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=['put'], url_path='roles')
     def set_roles(self, request, pk=None):
         user = self.get_object()
-        role_ids = request.data.get('role_ids', [])
-        roles = list(Role.objects.filter(id__in=role_ids, is_active=True))
-        if len(roles) != len(set(role_ids)):
-            raise serializers.ValidationError({'role_ids': 'One or more roles are invalid or inactive.'})
-        set_user_roles(user, roles, actor=request.user)
+        assignment_serializer = UserRoleAssignmentSerializer(data=request.data)
+        assignment_serializer.is_valid(raise_exception=True)
+        set_user_roles(user, assignment_serializer.validated_data['roles'], actor=request.user)
         return Response(UserAccessSerializer(user).data)
 
     @action(detail=True, methods=['put'], url_path='permissions')
     def set_permissions(self, request, pk=None):
         user = self.get_object()
-        permission_ids = request.data.get('permission_ids', [])
-        permissions = list(Permission.objects.filter(id__in=permission_ids))
-        if len(permissions) != len(set(permission_ids)):
-            raise serializers.ValidationError({'permission_ids': 'One or more permissions are invalid.'})
-        set_user_direct_permissions(user, permissions, actor=request.user)
+        assignment_serializer = UserPermissionAssignmentSerializer(data=request.data)
+        assignment_serializer.is_valid(raise_exception=True)
+        set_user_direct_permissions(user, assignment_serializer.validated_data['permissions'], actor=request.user)
         return Response(UserAccessSerializer(user).data)
 
 
@@ -115,6 +129,7 @@ class RoleViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
         'update': ['access.role.update'],
         'partial_update': ['access.role.update'],
         'destroy': ['access.role.delete'],
+        'set_permissions': ['access.role.assign_permissions'],
     }
 
     def perform_create(self, serializer):
@@ -131,8 +146,17 @@ class RoleViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
         log_access_event(actor=self.request.user, action='role.deleted', target_role=instance, before_state=RoleSerializer(instance).data)
         instance.delete()
 
+    @action(detail=True, methods=['put'], url_path='permissions')
+    def set_permissions(self, request, pk=None):
+        role = self.get_object()
+        assignment_serializer = RolePermissionAssignmentSerializer(data=request.data)
+        assignment_serializer.is_valid(raise_exception=True)
+        set_role_permissions(role, assignment_serializer.validated_data['permissions'], actor=request.user)
+        role.refresh_from_db()
+        return Response(RoleSerializer(role, context=self.get_serializer_context()).data)
 
-class PermissionViewSet(RBACPermissionMixin, viewsets.ReadOnlyModelViewSet):
+
+class PermissionViewSet(RBACPermissionMixin, viewsets.ModelViewSet):
     queryset = Permission.objects.select_related('profile').filter(profile__isnull=False)
     serializer_class = PermissionSerializer
     permission_classes = [IsAuthenticated, HasViewPermissions]
@@ -143,7 +167,44 @@ class PermissionViewSet(RBACPermissionMixin, viewsets.ReadOnlyModelViewSet):
     required_permissions = {
         'list': ['access.permission.view'],
         'retrieve': ['access.permission.view'],
+        'create': ['access.permission.create'],
+        'update': ['access.permission.update'],
+        'partial_update': ['access.permission.update'],
+        'destroy': ['access.permission.delete'],
     }
+
+    def perform_create(self, serializer):
+        permission = serializer.save()
+        log_access_event(
+            actor=self.request.user,
+            action='permission.created',
+            target_permission=permission,
+            after_state=PermissionSerializer(permission).data,
+        )
+
+    def perform_update(self, serializer):
+        permission = serializer.save()
+        log_access_event(
+            actor=self.request.user,
+            action='permission.updated',
+            target_permission=permission,
+            after_state=PermissionSerializer(permission).data,
+        )
+
+    def perform_destroy(self, instance):
+        affected_users = users_for_permission(instance)
+        before_state = PermissionSerializer(instance).data
+        permission_identifier = instance.pk
+        with transaction.atomic():
+            instance.delete()
+            for user in affected_users:
+                user.increment_authorization_version()
+        log_access_event(
+            actor=self.request.user,
+            action='permission.deleted',
+            target_permission=None,
+            before_state={**before_state, 'id': permission_identifier},
+        )
 
 
 class PermissionSyncView(APIView):
@@ -153,9 +214,14 @@ class PermissionSyncView(APIView):
         if not request.user.is_superuser and not request.user.has_permission('access.role.assign_permissions'):
             return Response({'detail': 'You do not have permission to synchronize access configuration.'}, status=status.HTTP_403_FORBIDDEN)
 
+        overwrite = str(request.data.get('overwrite', '')).lower() in {'1', 'true', 'yes'}
+
         with transaction.atomic():
-            sync_permissions()
-            sync_default_roles()
+            sync_permissions(overwrite=overwrite)
+            sync_default_roles(overwrite=overwrite)
             sync_existing_role_assignments()
 
-        return Response({'detail': 'Access configuration synchronized successfully.'})
+        return Response({
+            'detail': 'Access configuration synchronized successfully.',
+            'overwrite': overwrite,
+        })
